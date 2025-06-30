@@ -66,22 +66,36 @@ def link_entity_to_pelagios(entity_text):
 # --- Extract Entities Using LLM Prompt ---
 def extract_entities_with_types(text):
     prompt = (
-        "Extract all named entities from the following text. "
-        "Return them as a JSON array of objects with 'text' and 'type' keys.\n\n"
-        f"Text: {text}\n\nEntities:"
+        "You are an expert in named entity recognition. Extract all named entities from the text below. "
+        "Return a JSON array of dictionaries. Each dictionary must contain two fields: "
+        "\"text\" (the exact entity) and \"type\" (e.g., Person, Organisation, Place, Event, Object, Device, etc.).\n\n"
+        f"Text:\n{text}\n\n"
+        "Entities:"
     )
-    payload = {"inputs": prompt, "parameters": {"max_new_tokens": 512}}
-    response = requests.post(HUGGINGFACE_API_URL, headers=HUGGINGFACE_HEADERS, json=payload)
+
+    payload = {
+        "inputs": prompt,
+        "parameters": {"max_new_tokens": 1024}
+    }
+
     try:
-        output_text = response.json()[0]['generated_text'].split("Entities:")[-1].strip()
-        entities = json.loads(output_text)
+        response = requests.post(HUGGINGFACE_API_URL, headers=HUGGINGFACE_HEADERS, json=payload)
+        raw = response.json()[0].get("generated_text", "")
+        # Use regex to find the first array-like JSON string
+        match = re.search(r"\[\s*{.*?}\s*\]", raw, re.DOTALL)
+        if not match:
+            st.error("LLM response could not be parsed as JSON. Try adjusting the prompt or input length.")
+            return []
+        entities = json.loads(match.group(0))
         for ent in entities:
             ent["wikidata"] = link_entity_to_wikidata(ent["text"])
-            if ent["type"].lower() == "place":
+            if ent.get("type", "").lower() == "place":
                 ent["pleiades"] = link_entity_to_pelagios(ent["text"])
-    except Exception:
-        entities = []
-    return entities
+        return entities
+    except Exception as e:
+        st.error(f"Failed to extract entities: {e}")
+        return []
+
 
 # --- Upload and Process File or Input Text ---
 st.title("InsideText LLM Entity Extraction")
