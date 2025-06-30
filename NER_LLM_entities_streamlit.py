@@ -7,6 +7,7 @@ import fitz  # PyMuPDF
 import docx
 import zipfile
 import io
+import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from streamlit_folium import st_folium
 import folium
@@ -60,24 +61,6 @@ def extract_entities_with_types(text):
             ent_type = "Thing"
         results.append({"text": token, "type": ent_type})
     return results
-
-# --- Entity Extraction ---
-def extract_entities_with_types(text):
-    tokenizer, model = load_model()
-    prompt = (
-        "Extract all named entities from the following text. "
-        "For each entity, return the text and the type. Use this format:\n"
-        "Entity: <name>, Type: <type>\n\n"
-        f"Text:\n{text[:3000]}"
-    )
-
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True).to(model.device)
-    outputs = model.generate(**inputs, max_new_tokens=800)
-    decoded = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    pattern = r"Entity:\s*(.+?),\s*Type:\s*(.+)"
-    matches = re.findall(pattern, decoded)
-    return [{"text": m[0].strip(), "type": m[1].strip()} for m in matches]
 
 # --- Wikidata Linking ---
 def link_wikidata(entity_text):
