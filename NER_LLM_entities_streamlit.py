@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 st.set_page_config(page_title="InsideText NER Tool", layout="centered")
 
 with st.sidebar:
-    st.image("insidetext_logo.png", use_column_width=True)
+    st.image("logo.png", use_column_width=True)
     st.markdown("### InsideText Named Entity Recognition")
     st.markdown("Extract, annotate, and explore named entities with LLM support.")
     st.markdown("---")
