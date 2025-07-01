@@ -1132,7 +1132,7 @@ Entities:"""
         return url
 
     def link_to_pelagios(self, entities):
-        """Link entities to Pelagios network using both Pleiades and new API."""
+        """Link entities to Pelagios network using both Pleiades and new API with precise matching."""
         for entity in entities:
             # Only link geographical/place entities to Pelagios
             if entity['type'] not in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']:
@@ -1146,31 +1146,41 @@ Entities:"""
             # Always add Pleiades search URL
             entity['pleiades_search_url'] = self.link_entity_to_pelagios(entity['text'])
             
-            # Try the new Pelagios API
+            # Try the new Pelagios API with precise matching
             try:
                 api_url = "http://pelagios.dme.ait.ac.at/api"
                 search_endpoint = f"{api_url}/search"
                 
+                # Use exact phrase matching to avoid partial matches
+                search_term = f'"{entity["text"]}"'  # Wrap in quotes for exact match
+                
                 params = {
-                    'q': entity['text'],
+                    'q': search_term,
                     'format': 'json',
-                    'limit': 1
+                    'limit': 5  # Get more results to filter through
                 }
                 
                 response = requests.get(search_endpoint, params=params, timeout=8)
                 if response.status_code == 200:
                     data = response.json()
                     if data and isinstance(data, list) and len(data) > 0:
-                        result = data[0]
-                        link_data = {
-                            'pelagios_api_url': result.get('uri', ''),
-                            'pelagios_title': result.get('title', ''),
-                            'pelagios_description': result.get('description', ''),
-                            'pelagios_coordinates': result.get('geometry', {}).get('coordinates', [])
-                        }
-                        entity.update(link_data)
-                        st.session_state.prompt_cache[cache_key] = link_data
-                        print(f"Pelagios API link found for {entity['text']}")
+                        
+                        # Filter results for exact or close matches
+                        best_match = self._find_best_pelagios_match(entity['text'], data)
+                        
+                        if best_match:
+                            link_data = {
+                                'pelagios_api_url': best_match.get('uri', ''),
+                                'pelagios_title': best_match.get('title', ''),
+                                'pelagios_description': best_match.get('description', ''),
+                                'pelagios_coordinates': best_match.get('geometry', {}).get('coordinates', []),
+                                'pelagios_match_score': best_match.get('match_score', 0)
+                            }
+                            entity.update(link_data)
+                            st.session_state.prompt_cache[cache_key] = link_data
+                            print(f"Pelagios API precise match found for {entity['text']}: {best_match.get('title')}")
+                        else:
+                            print(f"No precise Pelagios match for {entity['text']}")
                     else:
                         print(f"No Pelagios API results for {entity['text']}")
                 else:
@@ -1184,6 +1194,96 @@ Entities:"""
                 pass
         
         return entities
+
+    def _find_best_pelagios_match(self, entity_text: str, pelagios_results: list) -> dict:
+        """
+        Find the best matching result from Pelagios API, filtering out vague matches.
+        
+        Args:
+            entity_text: The entity we're looking for
+            pelagios_results: List of results from Pelagios API
+            
+        Returns:
+            Best matching result or None if no good match found
+        """
+        entity_lower = entity_text.lower().strip()
+        best_match = None
+        best_score = 0
+        
+        for result in pelagios_results:
+            title = result.get('title', '').lower().strip()
+            description = result.get('description', '').lower().strip()
+            
+            # Skip if no title
+            if not title:
+                continue
+            
+            # Calculate match score
+            match_score = 0
+            
+            # Exact title match (highest score)
+            if title == entity_lower:
+                match_score = 100
+            # Title starts with entity (high score)
+            elif title.startswith(entity_lower):
+                match_score = 80
+            # Entity is whole word in title (good score)
+            elif f" {entity_lower} " in f" {title} " or title.endswith(f" {entity_lower}"):
+                match_score = 70
+            # Partial match but entity must be significant part
+            elif entity_lower in title and len(entity_lower) > 3:
+                # Check if entity is a significant portion of the title
+                if len(entity_lower) / len(title) > 0.5:
+                    match_score = 60
+                else:
+                    match_score = 30
+            
+            # Bonus for exact match in description
+            if entity_lower in description and len(entity_lower) > 3:
+                match_score += 10
+            
+            # Penalty for very long titles (likely to be composite/vague)
+            if len(title.split()) > 5:
+                match_score -= 20
+            
+            # Penalty for results that contain common words suggesting broad categories
+            vague_indicators = ['region', 'area', 'general', 'various', 'multiple', 'empire', 'culture']
+            if any(indicator in title for indicator in vague_indicators):
+                match_score -= 30
+            
+            # Penalty for results that seem to be about the adjective form (e.g., "Egyptian" -> "Egyptian culture")
+            if entity_text.endswith('ian') or entity_text.endswith('an'):
+                # This might be a demonym/adjective, be more strict
+                if not (title == entity_lower or title.startswith(entity_lower + ' ')):
+                    match_score -= 40
+            
+            # Only consider matches above threshold
+            if match_score > 50 and match_score > best_score:
+                best_score = match_score
+                best_match = result.copy()
+                best_match['match_score'] = match_score
+        
+        # Additional validation: reject matches that are clearly too broad
+        if best_match:
+            title = best_match.get('title', '').lower()
+            
+            # Reject overly broad geographical terms
+            broad_terms = [
+                'mediterranean', 'ancient world', 'classical world', 
+                'eastern mediterranean', 'western asia', 'near east'
+            ]
+            
+            if any(broad_term in title for broad_term in broad_terms):
+                print(f"Rejecting broad match for {entity_text}: {title}")
+                return None
+            
+            # For demonyms/adjectives, ensure it's a specific place, not a cultural concept
+            if entity_text.lower() in ['egyptian', 'assyrian', 'persian', 'phoenician']:
+                if 'culture' in title or 'civilization' in title or 'people' in title:
+                    print(f"Rejecting cultural/people match for {entity_text}: {title}")
+                    return None
+        
+        return best_match
 
 
 class StreamlitSustainableApp:
