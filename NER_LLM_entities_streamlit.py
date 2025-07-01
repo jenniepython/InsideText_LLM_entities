@@ -309,12 +309,23 @@ Entities:"""
     def _parse_json_response(self, response: str, original_text: str) -> List[Dict[str, Any]]:
         """Parse JSON response efficiently."""
         entities = []
+        debug_mode = st.session_state.get('debug_mode', False)
+        
+        if debug_mode:
+            st.write("**Debug: Parsing JSON Response**")
         
         # Find JSON in response
         json_match = re.search(r'\[.*?\]', response, re.DOTALL)
         if json_match:
+            if debug_mode:
+                st.write("Found JSON pattern in response")
+                st.code(json_match.group())
+            
             try:
                 parsed = json.loads(json_match.group())
+                if debug_mode:
+                    st.write(f"Successfully parsed JSON with {len(parsed)} items")
+                
                 for item in parsed:
                     if isinstance(item, dict) and 'text' in item and 'type' in item:
                         entity_text = item['text'].strip()
@@ -326,18 +337,32 @@ Entities:"""
                                 'start': start_pos,
                                 'end': start_pos + len(entity_text)
                             })
-            except json.JSONDecodeError:
-                pass
+                        if debug_mode:
+                            st.write(f"Found: {entity_text} ({item['type']})")
+                        elif debug_mode:
+                            st.write(f"Could not locate: {entity_text}")
+            except json.JSONDecodeError as e:
+                if debug_mode:
+                    st.error(f"JSON parsing error: {e}")
+        elif debug_mode:
+            st.warning("No JSON pattern found in response")
         
         return entities
 
     def _parse_structured_response(self, response: str, original_text: str) -> List[Dict[str, Any]]:
         """Parse structured response efficiently."""
         entities = []
+        debug_mode = st.session_state.get('debug_mode', False)
+        
+        if debug_mode:
+            st.write("**Debug: Parsing Structured Response**")
         
         # Parse "TYPE: entity" format
         pattern = r'([A-Z]+):\s*([^\n]+)'
         matches = re.findall(pattern, response)
+        
+        if debug_mode:
+            st.write(f"Found {len(matches)} structured matches")
         
         for entity_type, entity_text in matches:
             entity_text = entity_text.strip()
@@ -349,16 +374,27 @@ Entities:"""
                     'start': start_pos,
                     'end': start_pos + len(entity_text)
                 })
+                if debug_mode:
+                    st.write(f"Found: {entity_text} ({entity_type})")
+            elif debug_mode:
+                st.write(f"Could not locate: {entity_text}")
         
         return entities
 
     def _parse_simple_response(self, response: str, original_text: str) -> List[Dict[str, Any]]:
         """Parse simple response efficiently."""
         entities = []
+        debug_mode = st.session_state.get('debug_mode', False)
+        
+        if debug_mode:
+            st.write("**Debug: Parsing Simple Response**")
         
         # Parse "Entity (TYPE)" format
         pattern = r'([^(]+)\s*\(([^)]+)\)'
         matches = re.findall(pattern, response)
+        
+        if debug_mode:
+            st.write(f"Found {len(matches)} simple matches")
         
         for entity_text, entity_type in matches:
             entity_text = entity_text.strip()
@@ -371,6 +407,10 @@ Entities:"""
                     'start': start_pos,
                     'end': start_pos + len(entity_text)
                 })
+                if debug_mode:
+                    st.write(f"Found: {entity_text} ({entity_type})")
+            elif debug_mode:
+                st.write(f"Could not locate: {entity_text}")
         
         return entities
 
@@ -982,6 +1022,13 @@ class StreamlitSustainableApp:
         if 'domain_hint' not in st.session_state:
             st.session_state.domain_hint = ""
         st.session_state.domain_hint = domain_hint
+        
+        # Add debugging section
+        st.sidebar.subheader("Debug Mode")
+        debug_mode = st.sidebar.checkbox("Enable Debug Output", help="Shows detailed extraction process")
+        if 'debug_mode' not in st.session_state:
+            st.session_state.debug_mode = False
+        st.session_state.debug_mode = debug_mode
 
     def render_input_section(self):
         """Render the text input section."""
