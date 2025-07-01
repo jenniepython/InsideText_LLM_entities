@@ -1226,18 +1226,20 @@ class StreamlitSustainableApp:
         st.header("Sustainable Entity Extraction")
         st.markdown("**Generic prompt engineering with intelligent caching and minimal energy usage**")
         
-        # Show sustainability metrics
+        # Only show sustainability metrics if there's been some activity
         metrics = self.extractor.get_sustainability_metrics()
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("API Calls", metrics['api_calls'])
-        with col2:
-            st.metric("Cache Hits", metrics['cache_hits'])
-        with col3:
-            st.metric("Cache Efficiency", f"{metrics['cache_efficiency']:.1f}%")
-        with col4:
-            st.metric("Tokens Used", metrics['tokens_processed'])
+        if metrics['api_calls'] > 0 or metrics['cache_hits'] > 0:
+            st.subheader("Sustainability Metrics")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("API Calls", metrics['api_calls'])
+            with col2:
+                st.metric("Cache Hits", metrics['cache_hits'])
+            with col3:
+                st.metric("Cache Efficiency", f"{metrics['cache_efficiency']:.1f}%")
+            with col4:
+                st.metric("Tokens Used", metrics['tokens_processed'])
 
     def render_sidebar(self):
         """Render the sidebar with sustainability info."""
