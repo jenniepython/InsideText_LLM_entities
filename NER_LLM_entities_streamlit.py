@@ -134,11 +134,7 @@ class SustainablePromptExtractor:
 
     def extract_entities(self, text: str, domain_hint: str = "") -> List[Dict[str, Any]]:
         """
-        Extract entities using sustainable prompt engineering.
-        
-        Args:
-            text: Input text to analyze
-            domain_hint: Optional domain context for better extraction
+        Extract entities using sustainable prompt engineering with robust fallbacks.
         """
         # Check cache first (zero energy cost)
         cache_key = self._get_cache_key(text, domain_hint)
@@ -147,11 +143,250 @@ class SustainablePromptExtractor:
             print(f"Cache hit - zero energy used")
             return st.session_state.prompt_cache[cache_key]
         
-        # Use efficient prompting strategy
-        entities = self._extract_with_efficient_prompting(text, domain_hint)
+        debug_mode = st.session_state.get('debug_mode', False)
         
-        # Cache the result
-        st.session_state.prompt_cache[cache_key] = entities
+        if debug_mode:
+            st.write("**Starting entity extraction**")
+            st.write(f"Text preview: {text[:200]}...")
+            st.write(f"Domain hint: {domain_hint}")
+        
+        # Use multiple robust prompting strategies
+        entities = []
+        
+        # Strategy 1: Historical-optimized prompt
+        if domain_hint == "historical" or "ancient" in text.lower() or "persian" in text.lower():
+            entities = self._extract_historical_entities(text, debug_mode)
+            if entities:
+                if debug_mode:
+                    st.write(f"Historical extraction found {len(entities)} entities")
+                st.session_state.prompt_cache[cache_key] = entities
+                return entities
+        
+        # Strategy 2: Simple direct extraction
+        entities = self._extract_simple_entities(text, debug_mode)
+        if entities:
+            if debug_mode:
+                st.write(f"Simple extraction found {len(entities)} entities")
+            st.session_state.prompt_cache[cache_key] = entities
+            return entities
+        
+        # Strategy 3: Manual pattern extraction as absolute fallback
+        entities = self._extract_manual_fallback(text, debug_mode)
+        if entities:
+            if debug_mode:
+                st.write(f"Manual fallback found {len(entities)} entities")
+            st.session_state.prompt_cache[cache_key] = entities
+            return entities
+        
+        if debug_mode:
+            st.error("All extraction strategies failed")
+        
+        return []
+
+    def _extract_historical_entities(self, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
+        """Extract entities optimized for historical text."""
+        
+        prompt = f"""This is ancient historical text. Find all proper names of people, places, and peoples.
+
+Text: {text}
+
+List each name on a separate line with its type:
+- PERSON: individual people's names
+- PLACE: cities, regions, countries, seas
+- PEOPLE: groups, nations, tribes
+
+Format: Name | Type
+
+Names:"""
+
+        if debug_mode:
+            st.write("**Trying historical prompt**")
+        
+        response = self._make_simple_api_call(prompt, debug_mode)
+        if response:
+            return self._parse_line_format(response, text, debug_mode)
+        
+        return []
+
+    def _extract_simple_entities(self, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
+        """Simple direct entity extraction."""
+        
+        prompt = f"""Find all proper names in this text. List each name with its type.
+
+{text}
+
+Format: Name (Type)
+Types: PERSON, PLACE, GROUP
+
+Names:"""
+
+        if debug_mode:
+            st.write("**Trying simple prompt**")
+        
+        response = self._make_simple_api_call(prompt, debug_mode)
+        if response:
+            return self._parse_parenthesis_format(response, text, debug_mode)
+        
+        return []
+
+    def _extract_manual_fallback(self, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
+        """Manual pattern fallback for when AI fails completely."""
+        
+        if debug_mode:
+            st.write("**Using manual pattern fallback**")
+        
+        entities = []
+        
+        # Look for capitalized words that could be proper nouns
+        import re
+        
+        # Find sequences of capitalized words
+        pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
+        matches = re.finditer(pattern, text)
+        
+        # Known entity indicators for historical text
+        person_indicators = ['daughter of', 'son of', 'king', 'according to']
+        place_indicators = ['came to', 'sailed to', 'from', 'called', 'sea', 'country']
+        people_indicators = ['men', 'say that', 'people']
+        
+        for match in matches:
+            entity_text = match.group()
+            start_pos = match.start()
+            
+            # Skip common words
+            if entity_text.lower() in ['the', 'these', 'among', 'other', 'most', 'many', 'which', 'when', 'their', 'what', 'now']:
+                continue
+            
+            # Determine type based on context
+            context_before = text[max(0, start_pos-50):start_pos].lower()
+            context_after = text[start_pos:start_pos+50].lower()
+            
+            entity_type = 'GPE'  # Default
+            
+            if any(indicator in context_before for indicator in person_indicators):
+                entity_type = 'PERSON'
+            elif any(indicator in context_before or indicator in context_after for indicator in place_indicators):
+                entity_type = 'LOCATION'
+            elif any(indicator in context_after for indicator in people_indicators):
+                entity_type = 'ORGANIZATION'
+            
+            entities.append({
+                'text': entity_text,
+                'type': entity_type,
+                'start': start_pos,
+                'end': start_pos + len(entity_text)
+            })
+            
+            if debug_mode:
+                st.write(f"Manual pattern found: {entity_text} ({entity_type})")
+        
+        # Remove duplicates and common false positives
+        filtered_entities = []
+        seen_texts = set()
+        
+        for entity in entities:
+            if entity['text'] not in seen_texts and len(entity['text']) > 2:
+                seen_texts.add(entity['text'])
+                filtered_entities.append(entity)
+        
+        return filtered_entities[:20]  # Limit to prevent noise
+
+    def _make_simple_api_call(self, prompt: str, debug_mode: bool = False) -> str:
+        """Simplified API call with better error handling."""
+        
+        models = ["google/flan-t5-large", "google/flan-t5-base"]
+        
+        for model in models:
+            try:
+                if debug_mode:
+                    st.write(f"Trying model: {model}")
+                
+                url = f"https://api-inference.huggingface.co/models/{model}"
+                payload = {
+                    "inputs": prompt,
+                    "parameters": {
+                        "max_length": 200,
+                        "temperature": 0.3,
+                        "do_sample": True
+                    }
+                }
+                
+                response = requests.post(url, json=payload, timeout=20)
+                
+                if response.status_code == 503:
+                    if debug_mode:
+                        st.warning(f"Model {model} loading, trying next...")
+                    continue
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if isinstance(result, list) and len(result) > 0:
+                        response_text = result[0].get("generated_text", "")
+                        if response_text and len(response_text) > 10:
+                            if debug_mode:
+                                st.write(f"Got response from {model}")
+                                st.code(response_text[:500])
+                            return response_text
+                
+                if debug_mode:
+                    st.write(f"Failed: {response.status_code}")
+                
+            except Exception as e:
+                if debug_mode:
+                    st.write(f"Error with {model}: {str(e)}")
+                continue
+        
+        if debug_mode:
+            st.error("All API calls failed")
+        return ""
+
+    def _parse_line_format(self, response: str, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
+        """Parse 'Name | Type' format."""
+        entities = []
+        
+        lines = response.split('\n')
+        for line in lines:
+            if '|' in line:
+                parts = line.split('|')
+                if len(parts) >= 2:
+                    name = parts[0].strip().strip('-').strip()
+                    entity_type = parts[1].strip().upper()
+                    
+                    if len(name) > 1 and name in text:
+                        start_pos = text.find(name)
+                        entities.append({
+                            'text': name,
+                            'type': entity_type,
+                            'start': start_pos,
+                            'end': start_pos + len(name)
+                        })
+                        if debug_mode:
+                            st.write(f"Parsed: {name} ({entity_type})")
+        
+        return entities
+
+    def _parse_parenthesis_format(self, response: str, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
+        """Parse 'Name (Type)' format."""
+        entities = []
+        
+        import re
+        pattern = r'([A-Za-z\s]+)\s*\(([^)]+)\)'
+        matches = re.findall(pattern, response)
+        
+        for name, entity_type in matches:
+            name = name.strip()
+            entity_type = entity_type.strip().upper()
+            
+            if len(name) > 1 and name in text:
+                start_pos = text.find(name)
+                entities.append({
+                    'text': name,
+                    'type': entity_type,
+                    'start': start_pos,
+                    'end': start_pos + len(name)
+                })
+                if debug_mode:
+                    st.write(f"Parsed: {name} ({entity_type})")
         
         return entities
 
