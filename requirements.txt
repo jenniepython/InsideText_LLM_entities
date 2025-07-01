@@ -8,4 +8,6 @@ python-docx
 folium
 streamlit-folium
 lxml
-
+streamlit-authenticator==0.2.3
+plotly
+pyyaml
