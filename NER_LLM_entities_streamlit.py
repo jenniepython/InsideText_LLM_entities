@@ -1197,7 +1197,7 @@ Entities:"""
 
     def _find_best_pelagios_match(self, entity_text: str, pelagios_results: list) -> dict:
         """
-        Find the best matching result from Pelagios API, filtering out vague matches.
+        Find the best matching result from Pelagios API using generic matching criteria.
         
         Args:
             entity_text: The entity we're looking for
@@ -1218,72 +1218,56 @@ Entities:"""
             if not title:
                 continue
             
-            # Calculate match score
+            # Calculate match score based purely on text similarity
             match_score = 0
             
             # Exact title match (highest score)
             if title == entity_lower:
                 match_score = 100
-            # Title starts with entity (high score)
+            # Title starts with entity
             elif title.startswith(entity_lower):
+                # Higher score if followed by space (complete word)
+                if len(title) > len(entity_lower) and title[len(entity_lower)] == ' ':
+                    match_score = 90
+                else:
+                    match_score = 85
+            # Entity is complete word in title
+            elif f" {entity_lower} " in f" {title} ":
                 match_score = 80
-            # Entity is whole word in title (good score)
-            elif f" {entity_lower} " in f" {title} " or title.endswith(f" {entity_lower}"):
-                match_score = 70
-            # Partial match but entity must be significant part
-            elif entity_lower in title and len(entity_lower) > 3:
-                # Check if entity is a significant portion of the title
-                if len(entity_lower) / len(title) > 0.5:
-                    match_score = 60
+            # Title ends with entity
+            elif title.endswith(f" {entity_lower}"):
+                match_score = 75
+            # Partial match - check if significant
+            elif entity_lower in title:
+                # Score based on how much of the title the entity represents
+                overlap_ratio = len(entity_lower) / len(title)
+                if overlap_ratio > 0.5:
+                    match_score = 70
+                elif overlap_ratio > 0.3:
+                    match_score = 50
                 else:
                     match_score = 30
             
-            # Bonus for exact match in description
-            if entity_lower in description and len(entity_lower) > 3:
-                match_score += 10
+            # Simple length-based quality indicator
+            # Prefer shorter, more specific titles over very long ones
+            word_count = len(title.split())
+            if word_count <= 3:
+                match_score += 10  # Bonus for concise titles
+            elif word_count > 8:
+                match_score -= 15  # Penalty for very long titles
             
-            # Penalty for very long titles (likely to be composite/vague)
-            if len(title.split()) > 5:
-                match_score -= 20
-            
-            # Penalty for results that contain common words suggesting broad categories
-            vague_indicators = ['region', 'area', 'general', 'various', 'multiple', 'empire', 'culture']
-            if any(indicator in title for indicator in vague_indicators):
-                match_score -= 30
-            
-            # Penalty for results that seem to be about the adjective form (e.g., "Egyptian" -> "Egyptian culture")
-            if entity_text.endswith('ian') or entity_text.endswith('an'):
-                # This might be a demonym/adjective, be more strict
-                if not (title == entity_lower or title.startswith(entity_lower + ' ')):
-                    match_score -= 40
-            
-            # Only consider matches above threshold
-            if match_score > 50 and match_score > best_score:
+            # Keep track of best match
+            if match_score > best_score:
                 best_score = match_score
                 best_match = result.copy()
                 best_match['match_score'] = match_score
         
-        # Additional validation: reject matches that are clearly too broad
-        if best_match:
-            title = best_match.get('title', '').lower()
-            
-            # Reject overly broad geographical terms
-            broad_terms = [
-                'mediterranean', 'ancient world', 'classical world', 
-                'eastern mediterranean', 'western asia', 'near east'
-            ]
-            
-            if any(broad_term in title for broad_term in broad_terms):
-                print(f"Rejecting broad match for {entity_text}: {title}")
-                return None
-            
-            # For demonyms/adjectives, ensure it's a specific place, not a cultural concept
-            if entity_text.lower() in ['egyptian', 'assyrian', 'persian', 'phoenician']:
-                if 'culture' in title or 'civilization' in title or 'people' in title:
-                    print(f"Rejecting cultural/people match for {entity_text}: {title}")
-                    return None
+        # Only return matches that meet a reasonable threshold
+        if best_match and best_score >= 40:
+            print(f"Pelagios match for {entity_text}: {best_match.get('title')} (score: {best_score})")
+            return best_match
         
-        return best_match
+        return None
 
 
 class StreamlitSustainableApp:
