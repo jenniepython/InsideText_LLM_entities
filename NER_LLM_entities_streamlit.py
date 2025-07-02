@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-Pure Prompt-Based Entity Extraction and Linking
+Sustainable Multi-Tier Entity Extraction
 
-No hardcoding - everything is handled by comprehensive prompts sent to language models.
-The LLM handles extraction, classification, and linking instructions all in one call.
+Progressive approach:
+1. Efficient small prompts first (minimal energy)
+2. Intelligent caching (zero repeat energy) 
+3. Complex prompts only if simple ones fail (energy conscious)
+4. Local fallbacks (zero energy)
+5. Energy usage tracking and optimization
 """
 
 import streamlit as st
@@ -13,15 +17,16 @@ import time
 from typing import List, Dict, Any, Optional
 import pandas as pd
 import hashlib
+import re
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="Pure Prompt Entity Extraction",
+    page_title="Sustainable Entity Extraction",
     layout="centered",  
     initial_sidebar_state="collapsed" 
 )
 
-# Simplified authentication (remove if not needed)
+# Simplified authentication
 try:
     import streamlit_authenticator as stauth
     import yaml
@@ -47,324 +52,439 @@ try:
             authenticator.logout("Logout", "sidebar")
             
 except (ImportError, FileNotFoundError):
-    # Skip authentication if not available
     pass
 
-class PurePromptEntityExtractor:
+class SustainableEntityExtractor:
     """
-    Entity extraction using only comprehensive prompts - zero hardcoding.
+    Multi-tier sustainable entity extraction with progressive complexity.
     """
     
     def __init__(self):
-        if 'extraction_cache' not in st.session_state:
-            st.session_state.extraction_cache = {}
+        # Initialize caches
+        if 'entity_cache' not in st.session_state:
+            st.session_state.entity_cache = {}
+        if 'linking_cache' not in st.session_state:
+            st.session_state.linking_cache = {}
+        if 'geocoding_cache' not in st.session_state:
+            st.session_state.geocoding_cache = {}
         
-        self.api_calls_made = 0
+        # Energy tracking
+        self.energy_metrics = {
+            'tier1_calls': 0,  # Simple prompts
+            'tier2_calls': 0,  # Medium prompts  
+            'tier3_calls': 0,  # Complex prompts
+            'cache_hits': 0,
+            'local_fallbacks': 0,
+            'total_tokens': 0
+        }
 
-    def extract_and_link_entities(self, text: str, domain_context: str = "") -> Dict[str, Any]:
+    def extract_entities(self, text: str, domain_hint: str = "") -> List[Dict[str, Any]]:
         """
-        Extract and link entities using a single comprehensive prompt.
-        
-        Args:
-            text: Input text to analyze
-            domain_context: Optional domain hint
-            
-        Returns:
-            Complete results including entities with links
+        Multi-tier extraction: simple → medium → complex → local fallback.
         """
-        # Check cache
-        cache_key = hashlib.md5(f"{text}_{domain_context}".encode()).hexdigest()
-        if cache_key in st.session_state.extraction_cache:
-            return st.session_state.extraction_cache[cache_key]
+        # Check cache first (zero energy)
+        cache_key = hashlib.md5(f"{text}_{domain_hint}".encode()).hexdigest()
+        if cache_key in st.session_state.entity_cache:
+            self.energy_metrics['cache_hits'] += 1
+            return st.session_state.entity_cache[cache_key]
         
-        # Create comprehensive prompt
-        prompt = self._create_comprehensive_prompt(text, domain_context)
+        # Tier 1: Simple, efficient prompt (minimal energy)
+        entities = self._tier1_simple_extraction(text, domain_hint)
+        if entities and len(entities) >= 3:  # Good enough result
+            st.session_state.entity_cache[cache_key] = entities
+            return entities
         
-        # Send to language model
-        response = self._call_language_model(prompt)
+        # Tier 2: Medium complexity prompt (moderate energy)
+        entities = self._tier2_structured_extraction(text, domain_hint)
+        if entities and len(entities) >= 2:  # Acceptable result
+            st.session_state.entity_cache[cache_key] = entities
+            return entities
         
+        # Tier 3: Complex prompt only if really needed (high energy)
+        entities = self._tier3_detailed_extraction(text, domain_hint)
+        if entities:
+            st.session_state.entity_cache[cache_key] = entities
+            return entities
+        
+        # Local fallback: Pattern matching (zero energy)
+        entities = self._local_fallback_extraction(text)
+        self.energy_metrics['local_fallbacks'] += 1
+        st.session_state.entity_cache[cache_key] = entities
+        return entities
+
+    def _tier1_simple_extraction(self, text: str, domain_hint: str) -> List[Dict[str, Any]]:
+        """Tier 1: Minimal, efficient prompt (20-30 tokens)."""
+        
+        domain_prefix = f"This is {domain_hint} text. " if domain_hint else ""
+        
+        prompt = f"""{domain_prefix}Find named entities:
+
+{text[:500]}...
+
+List: Name (Type)
+Types: PERSON, PLACE, GROUP
+
+Names:"""
+
+        response = self._make_efficient_call(prompt, max_tokens=100, tier=1)
         if response:
-            # Parse the comprehensive response
-            results = self._parse_comprehensive_response(response, text)
-            
-            # Cache results
-            st.session_state.extraction_cache[cache_key] = results
-            
-            return results
+            return self._parse_simple_format(response, text)
+        return []
+
+    def _tier2_structured_extraction(self, text: str, domain_hint: str) -> List[Dict[str, Any]]:
+        """Tier 2: Structured prompt (50-80 tokens)."""
         
-        return {"entities": [], "summary": "No entities extracted", "confidence": 0}
-
-    def _create_comprehensive_prompt(self, text: str, domain_context: str) -> str:
-        """Create a single comprehensive prompt that handles everything including geocoding."""
+        context = f" Focus on {domain_hint} entities." if domain_hint else ""
         
-        domain_instruction = ""
-        if domain_context:
-            domain_instruction = f"\nDomain context: This text is about {domain_context}. Adjust your analysis accordingly."
+        prompt = f"""Extract entities from this text.{context}
+
+Text: {text}
+
+Format:
+PERSON: [names]
+PLACE: [locations] 
+GROUP: [organizations]
+
+Output:"""
+
+        response = self._make_efficient_call(prompt, max_tokens=150, tier=2)
+        if response:
+            return self._parse_structured_format(response, text)
+        return []
+
+    def _tier3_detailed_extraction(self, text: str, domain_hint: str) -> List[Dict[str, Any]]:
+        """Tier 3: Detailed prompt only when needed (100+ tokens)."""
         
-        prompt = f"""You are an expert entity extraction, linking, and geocoding system. Analyze the following text and provide a comprehensive response.
+        prompt = f"""Analyze this text and extract named entities with types.
 
-{domain_instruction}
+Domain: {domain_hint if domain_hint else 'general'}
 
-INSTRUCTIONS:
-1. Extract all named entities (people, places, organizations, facilities, addresses)
-2. For each entity, determine the most appropriate knowledge base links
-3. For geographical entities, provide coordinates when possible
-4. Provide linking priority: Pelagios (for historical/geographical) > Wikidata > Wikipedia
-5. Include confidence scores and reasoning
-6. Provide a summary of findings
+Text: {text}
 
-TEXT TO ANALYZE:
-{text}
+Return JSON array:
+[{{"text": "name", "type": "PERSON|GPE|ORGANIZATION|LOCATION|FACILITY"}}]
 
-RESPONSE FORMAT:
-Return a JSON structure with this exact format:
-
-{{
-  "entities": [
-    {{
-      "text": "entity name as it appears in text",
-      "type": "PERSON|ORGANIZATION|LOCATION|FACILITY|GPE|ADDRESS",
-      "start_position": number,
-      "confidence": 0.0-1.0,
-      "reasoning": "why this is an entity and this type",
-      "links": {{
-        "pelagios_search": "https://pleiades.stoa.org/places/search?SearchableText=entityname",
-        "wikidata_search": "suggested search term for wikidata",
-        "wikipedia_search": "suggested search term for wikipedia",
-        "priority": "pelagios|wikidata|wikipedia - which to try first"
-      }},
-      "coordinates": {{
-        "latitude": number_or_null,
-        "longitude": number_or_null,
-        "source": "historical_knowledge|modern_knowledge|uncertain",
-        "precision": "exact|approximate|region",
-        "notes": "explanation of coordinate source and accuracy"
-      }},
-      "geographical_context": "if applicable, geographical region or context",
-      "historical_period": "if applicable, time period or era"
-    }}
-  ],
-  "summary": "brief summary of what entities were found",
-  "text_domain": "inferred domain/topic of the text",
-  "extraction_confidence": 0.0-1.0,
-  "geographical_focus": "main geographical area if applicable",
-  "time_period": "main time period if applicable"
-}}
-
-LINKING GUIDELINES:
-- For ancient/historical places: prioritize Pelagios/Pleiades
-- For modern entities: prioritize Wikidata/Wikipedia  
-- For people: prioritize Wikipedia then Wikidata
-- For organizations: prioritize Wikidata then Wikipedia
-- Provide search terms that will find the most relevant results
-- Consider context when determining link priority
-
-GEOCODING GUIDELINES:
-- Provide coordinates for any recognizable geographical entity
-- For historical places, use your knowledge of ancient geography
-- For modern places, use current geographical knowledge
-- Indicate coordinate source: historical_knowledge, modern_knowledge, or uncertain
-- Specify precision: exact (for specific sites), approximate (for general areas), region (for large areas)
-- Include explanatory notes about coordinate accuracy and source
-- Examples:
-  * Ancient city: provide approximate historical location
-  * Modern city: provide city center coordinates
-  * Region/country: provide central coordinates with "region" precision
-  * Uncertain locations: mark as uncertain with best estimate
-
-COORDINATE EXAMPLES:
-- "Argos": {{"latitude": 37.6333, "longitude": 22.7333, "source": "historical_knowledge", "precision": "approximate", "notes": "Ancient Greek city, approximate center of archaeological site"}}
-- "London": {{"latitude": 51.5074, "longitude": -0.1278, "source": "modern_knowledge", "precision": "exact", "notes": "Modern city center coordinates"}}
-- "Hellas": {{"latitude": 39.0742, "longitude": 21.8243, "source": "historical_knowledge", "precision": "region", "notes": "Ancient Greece, central coordinates of historical region"}}
-
-QUALITY STANDARDS:
-- Only extract clear, unambiguous named entities
-- Provide honest confidence scores
-- Include reasoning for each decision
-- Suggest the most appropriate knowledge bases for each entity type
-- For coordinates, be transparent about accuracy and source
-- Don't guess coordinates for completely unknown places
+Focus on clear, unambiguous entities only.
 
 JSON:"""
 
-        return prompt
+        response = self._make_efficient_call(prompt, max_tokens=200, tier=3)
+        if response:
+            return self._parse_json_format(response, text)
+        return []
 
-    def _call_language_model(self, prompt: str) -> Optional[str]:
-        """Call language model with the comprehensive prompt."""
+    def _local_fallback_extraction(self, text: str) -> List[Dict[str, Any]]:
+        """Local pattern matching fallback (zero energy cost)."""
         
-        models_to_try = [
-            "mistralai/Mistral-7B-Instruct-v0.1",
-            "google/flan-t5-large",
-            "microsoft/DialoGPT-medium"
-        ]
+        entities = []
         
-        for model in models_to_try:
+        # Simple capitalization patterns
+        pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
+        matches = re.finditer(pattern, text)
+        
+        for match in matches:
+            entity_text = match.group()
+            
+            # Skip common words
+            if entity_text.lower() in ['the', 'this', 'that', 'when', 'where', 'which', 'what']:
+                continue
+            
+            # Basic type inference from context
+            context = text[max(0, match.start()-20):match.start()+len(entity_text)+20].lower()
+            
+            if any(indicator in context for indicator in ['king', 'daughter', 'son', 'according to']):
+                entity_type = 'PERSON'
+            elif any(indicator in context for indicator in ['came to', 'from', 'sea', 'country']):
+                entity_type = 'GPE'
+            else:
+                entity_type = 'ORGANIZATION'
+            
+            entities.append({
+                'text': entity_text,
+                'type': entity_type,
+                'start': match.start(),
+                'end': match.end(),
+                'confidence': 0.6,
+                'source': 'local_fallback'
+            })
+        
+        # Limit to prevent noise
+        return entities[:10]
+
+    def _make_efficient_call(self, prompt: str, max_tokens: int, tier: int) -> Optional[str]:
+        """Make efficient API call with tier-appropriate models."""
+        
+        # Use smaller models for lower tiers (more sustainable)
+        model_tiers = {
+            1: ["google/flan-t5-base"],  # Most efficient
+            2: ["google/flan-t5-large"],  # Moderate
+            3: ["mistralai/Mistral-7B-Instruct-v0.1"]  # Complex, use sparingly
+        }
+        
+        models = model_tiers.get(tier, ["google/flan-t5-base"])
+        
+        for model in models:
             try:
                 url = f"https://api-inference.huggingface.co/models/{model}"
                 
                 payload = {
                     "inputs": prompt,
                     "parameters": {
-                        "max_new_tokens": 1000,
+                        "max_length": max_tokens,
                         "temperature": 0.1,
-                        "do_sample": True,
-                        "return_full_text": False
+                        "do_sample": False  # Deterministic for efficiency
                     }
                 }
                 
-                response = requests.post(url, json=payload, timeout=30)
+                response = requests.post(url, json=payload, timeout=15)
                 
                 if response.status_code == 503:
-                    st.warning(f"Model {model} is loading...")
-                    time.sleep(5)
-                    continue
+                    continue  # Try next model
                 
                 if response.status_code == 200:
                     result = response.json()
                     if isinstance(result, list) and len(result) > 0:
                         response_text = result[0].get("generated_text", "")
-                        if response_text and len(response_text) > 50:
-                            self.api_calls_made += 1
-                            st.success(f"Response received from {model}")
+                        if response_text:
+                            # Track energy usage
+                            self.energy_metrics[f'tier{tier}_calls'] += 1
+                            self.energy_metrics['total_tokens'] += len(prompt.split()) + len(response_text.split())
                             return response_text
                 
-                st.warning(f"No valid response from {model}")
-                
-            except Exception as e:
-                st.error(f"Error with {model}: {e}")
+            except Exception:
                 continue
         
-        st.error("All language models failed")
         return None
 
-    def _parse_comprehensive_response(self, response: str, original_text: str) -> Dict[str, Any]:
-        """Parse the comprehensive JSON response from the language model."""
+    def _parse_simple_format(self, response: str, text: str) -> List[Dict[str, Any]]:
+        """Parse 'Name (Type)' format."""
+        entities = []
+        pattern = r'([A-Za-z\s]+)\s*\(([A-Z]+)\)'
+        matches = re.findall(pattern, response)
         
-        # Try to extract JSON from response
-        import re
+        for name, entity_type in matches:
+            name = name.strip()
+            if len(name) > 1 and name in text:
+                start_pos = text.find(name)
+                entities.append({
+                    'text': name,
+                    'type': entity_type,
+                    'start': start_pos,
+                    'end': start_pos + len(name),
+                    'confidence': 0.8,
+                    'source': 'tier1_simple'
+                })
         
-        # Look for JSON structure
-        json_match = re.search(r'\{.*\}', response, re.DOTALL)
-        
-        if json_match:
-            try:
-                json_str = json_match.group()
-                parsed = json.loads(json_str)
-                
-                # Validate and enhance the parsed results
-                if isinstance(parsed, dict) and 'entities' in parsed:
-                    # Fix entity positions if needed
-                    for entity in parsed.get('entities', []):
-                        if 'text' in entity:
-                            # Find actual position in text if not provided or incorrect
-                            entity_text = entity['text']
-                            actual_pos = original_text.find(entity_text)
-                            if actual_pos != -1:
-                                entity['start_position'] = actual_pos
-                                entity['end_position'] = actual_pos + len(entity_text)
-                            
-                            # Generate actual links if URLs not provided
-                            if 'links' in entity:
-                                links = entity['links']
-                                
-                                # Generate Pleiades search URL
-                                import urllib.parse
-                                encoded_text = urllib.parse.quote(entity_text)
-                                links['pelagios_search'] = f"https://pleiades.stoa.org/places/search?SearchableText={encoded_text}"
-                                
-                                # Generate Wikipedia URL
-                                wiki_encoded = urllib.parse.quote(entity_text.replace(' ', '_'))
-                                links['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{wiki_encoded}"
-                    
-                    return parsed
-                
-            except json.JSONDecodeError as e:
-                st.error(f"JSON parsing error: {e}")
-        
-        # Fallback: try to extract entities from plain text
-        return self._fallback_parse(response, original_text)
+        return entities
 
-    def _fallback_parse(self, response: str, original_text: str) -> Dict[str, Any]:
-        """Fallback parsing if JSON fails."""
-        
+    def _parse_structured_format(self, response: str, text: str) -> List[Dict[str, Any]]:
+        """Parse structured PERSON:/PLACE: format."""
         entities = []
         
-        # Look for entity mentions in various formats
-        import re
+        type_mapping = {
+            'PERSON': 'PERSON',
+            'PLACE': 'GPE', 
+            'GROUP': 'ORGANIZATION'
+        }
         
-        # Try to find entity patterns in the response
-        patterns = [
-            r'"text":\s*"([^"]+)".*?"type":\s*"([^"]+)"',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*\(([A-Z]+)\)',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*-\s*([A-Z]+)'
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, response, re.IGNORECASE)
-            for match in matches:
-                if len(match) == 2:
-                    entity_text, entity_type = match[0].strip(), match[1].strip().upper()
-                    
-                    # Find position in original text
-                    start_pos = original_text.find(entity_text)
-                    if start_pos != -1:
-                        import urllib.parse
-                        encoded_text = urllib.parse.quote(entity_text)
-                        
+        for type_key, entity_type in type_mapping.items():
+            pattern = f'{type_key}:\\s*\\[([^\\]]+)\\]'
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                content = match.group(1)
+                names = [name.strip() for name in content.split(',')]
+                
+                for name in names:
+                    if len(name) > 1 and name in text:
+                        start_pos = text.find(name)
                         entities.append({
-                            "text": entity_text,
-                            "type": entity_type,
-                            "start_position": start_pos,
-                            "end_position": start_pos + len(entity_text),
-                            "confidence": 0.7,
-                            "reasoning": "Extracted from model response",
-                            "links": {
-                                "pelagios_search": f"https://pleiades.stoa.org/places/search?SearchableText={encoded_text}",
-                                "wikipedia_url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(entity_text.replace(' ', '_'))}",
-                                "priority": "pelagios" if entity_type in ["LOCATION", "GPE", "FACILITY"] else "wikipedia"
-                            }
+                            'text': name,
+                            'type': entity_type,
+                            'start': start_pos,
+                            'end': start_pos + len(name),
+                            'confidence': 0.9,
+                            'source': 'tier2_structured'
                         })
         
+        return entities
+
+    def _parse_json_format(self, response: str, text: str) -> List[Dict[str, Any]]:
+        """Parse JSON format from tier 3."""
+        entities = []
+        
+        json_match = re.search(r'\[.*?\]', response, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group())
+                for item in parsed:
+                    if isinstance(item, dict) and 'text' in item:
+                        name = item['text'].strip()
+                        if name in text:
+                            start_pos = text.find(name)
+                            entities.append({
+                                'text': name,
+                                'type': item.get('type', 'UNKNOWN'),
+                                'start': start_pos,
+                                'end': start_pos + len(name),
+                                'confidence': 0.95,
+                                'source': 'tier3_detailed'
+                            })
+            except json.JSONDecodeError:
+                pass
+        
+        return entities
+
+    def add_efficient_linking(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add efficient linking with caching."""
+        
+        for entity in entities:
+            cache_key = f"link_{entity['text']}"
+            
+            # Check cache first
+            if cache_key in st.session_state.linking_cache:
+                entity.update(st.session_state.linking_cache[cache_key])
+                self.energy_metrics['cache_hits'] += 1
+                continue
+            
+            # Generate efficient links
+            import urllib.parse
+            encoded_text = urllib.parse.quote(entity['text'])
+            
+            links = {
+                'pleiades_search': f"https://pleiades.stoa.org/places/search?SearchableText={encoded_text}",
+                'wikipedia_url': f"https://en.wikipedia.org/wiki/{urllib.parse.quote(entity['text'].replace(' ', '_'))}"
+            }
+            
+            entity.update(links)
+            st.session_state.linking_cache[cache_key] = links
+
+        return entities
+
+    def add_efficient_geocoding(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Add basic geocoding for place entities."""
+        
+        for entity in entities:
+            if entity['type'] not in ['GPE', 'LOCATION', 'FACILITY']:
+                continue
+            
+            cache_key = f"geo_{entity['text']}"
+            
+            # Check cache
+            if cache_key in st.session_state.geocoding_cache:
+                entity.update(st.session_state.geocoding_cache[cache_key])
+                self.energy_metrics['cache_hits'] += 1
+                continue
+            
+            # Simple geocoding lookup (minimal energy)
+            coords = self._simple_geocoding_lookup(entity['text'])
+            if coords:
+                entity.update(coords)
+                st.session_state.geocoding_cache[cache_key] = coords
+
+        return entities
+
+    def _simple_geocoding_lookup(self, place_name: str) -> Optional[Dict[str, Any]]:
+        """Simple, efficient geocoding."""
+        try:
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                'q': place_name,
+                'format': 'json',
+                'limit': 1
+            }
+            
+            response = requests.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    result = data[0]
+                    return {
+                        'latitude': float(result['lat']),
+                        'longitude': float(result['lon']),
+                        'location_name': result['display_name'],
+                        'geocoding_source': 'openstreetmap_simple'
+                    }
+        except Exception:
+            pass
+        
+        return None
+
+    def get_sustainability_metrics(self) -> Dict[str, Any]:
+        """Get detailed sustainability metrics."""
+        total_calls = sum([
+            self.energy_metrics['tier1_calls'],
+            self.energy_metrics['tier2_calls'], 
+            self.energy_metrics['tier3_calls']
+        ])
+        
         return {
-            "entities": entities,
-            "summary": f"Fallback parsing found {len(entities)} entities",
-            "extraction_confidence": 0.6,
-            "text_domain": "unknown"
+            'total_api_calls': total_calls,
+            'tier1_calls': self.energy_metrics['tier1_calls'],
+            'tier2_calls': self.energy_metrics['tier2_calls'],
+            'tier3_calls': self.energy_metrics['tier3_calls'],
+            'cache_hits': self.energy_metrics['cache_hits'],
+            'local_fallbacks': self.energy_metrics['local_fallbacks'],
+            'total_tokens': self.energy_metrics['total_tokens'],
+            'efficiency_ratio': self.energy_metrics['cache_hits'] / max(1, total_calls + self.energy_metrics['cache_hits'])
         }
 
 
-class StreamlitApp:
-    """Streamlit app for pure prompt entity extraction."""
+class SustainableApp:
+    """Sustainable Streamlit application."""
     
     def __init__(self):
-        self.extractor = PurePromptEntityExtractor()
+        self.extractor = SustainableEntityExtractor()
         
-        # Initialize session state
         if 'results' not in st.session_state:
             st.session_state.results = None
 
     def render_header(self):
-        """Render application header."""
-        # Logo
+        """Render header with sustainability focus."""
         try:
             if os.path.exists("logo.png"):
                 st.image("logo.png", width=300)
         except:
             pass
         
-        st.header("Pure Prompt Entity Extraction")
-        st.markdown("**Zero hardcoding - everything handled by language model prompts**")
+        st.header("Sustainable Entity Extraction")
+        st.markdown("**Progressive complexity: simple prompts first, complex only when needed**")
+        
+        # Show sustainability metrics only after activity
+        metrics = self.extractor.get_sustainability_metrics()
+        if metrics['total_api_calls'] > 0 or metrics['cache_hits'] > 0:
+            st.subheader("Sustainability Metrics")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("API Calls", metrics['total_api_calls'])
+            with col2:
+                st.metric("Cache Hits", metrics['cache_hits'])
+            with col3:
+                st.metric("Efficiency", f"{metrics['efficiency_ratio']:.1%}")
+            with col4:
+                st.metric("Tokens Used", metrics['total_tokens'])
+            
+            # Tier breakdown
+            with st.expander("Energy Usage Breakdown"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Tier 1 (Efficient)", metrics['tier1_calls'])
+                with col2:
+                    st.metric("Tier 2 (Moderate)", metrics['tier2_calls'])
+                with col3:
+                    st.metric("Tier 3 (Complex)", metrics['tier3_calls'])
+                
+                st.metric("Local Fallbacks (Zero Energy)", metrics['local_fallbacks'])
 
     def render_sidebar(self):
         """Render sidebar."""
-        st.sidebar.subheader("Pure Prompt Approach")
-        st.sidebar.info("• Single comprehensive prompt handles everything\n• No hardcoded patterns or rules\n• Language model determines entity types and links\n• Completely generic and adaptable")
+        st.sidebar.subheader("Sustainable Approach")
+        st.sidebar.info("• Tier 1: Simple prompts (20-30 tokens)\n• Tier 2: Structured prompts (50-80 tokens)\n• Tier 3: Complex prompts (100+ tokens)\n• Local fallback: Zero energy patterns\n• Intelligent caching throughout")
         
         st.sidebar.subheader("Domain Context")
         domain = st.sidebar.selectbox(
-            "Optional context hint:",
-            ["", "historical", "academic", "business", "technical", "literary", "geographical"],
-            help="Optional hint to help the language model understand context"
+            "Optional domain hint:",
+            ["", "historical", "academic", "business", "technical", "geographical"]
         )
         
         return domain
@@ -373,118 +493,53 @@ class StreamlitApp:
         """Render input section."""
         st.subheader("Input Text")
         
-        # Sample text
-        sample = """The Persian learned men say that the Phoenicians were the cause of the dispute. These came to our seas from the sea which is called Red, and having settled in the country which they still occupy, at once began to make long voyages. Among other places to which they carried Egyptian and Assyrian merchandise, they came to Argos, which was at that time preeminent in every way among the people of what is now called Hellas. The Phoenicians came to Argos, and set out their cargo. On the fifth or sixth day after their arrival, when their wares were almost all sold, many women came to the shore and among them especially the daughter of the king, whose name was Io (according to Persians and Greeks alike), the daughter of Inachus."""
+        sample = """The Persian learned men say that the Phoenicians were the cause of the dispute. These came to our seas from the sea which is called Red, and having settled in the country which they still occupy, at once began to make long voyages. Among other places to which they carried Egyptian and Assyrian merchandise, they came to Argos, which was at that time preeminent in every way among the people of what is now called Hellas."""
         
         text = st.text_area(
             "Text to analyze:",
             value=sample,
-            height=200,
-            help="The language model will extract entities and determine appropriate links"
+            height=150,
+            help="Uses progressive complexity: simple extraction first, complex only if needed"
         )
         
         return text
 
     def render_results(self, results):
-        """Render results section."""
+        """Render results."""
         if not results:
             return
         
         st.subheader("Results")
         
-        # Summary
-        if results.get('summary'):
-            st.info(f"**Summary:** {results['summary']}")
-        
-        # Metrics
-        entities = results.get('entities', [])
-        geocoded_count = len([e for e in entities if e.get('coordinates', {}).get('latitude')])
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Entities Found", len(entities))
+            st.metric("Entities Found", len(results))
         with col2:
-            confidence = results.get('extraction_confidence', 0)
-            st.metric("Confidence", f"{confidence:.1%}")
+            geocoded = len([e for e in results if e.get('latitude')])
+            st.metric("Geocoded", geocoded)
         with col3:
-            st.metric("Geocoded", geocoded_count)
-        with col4:
-            st.metric("API Calls", self.extractor.api_calls_made)
+            sources = set(e.get('source', 'unknown') for e in results)
+            st.metric("Sources Used", len(sources))
         
-        # Context information
-        if results.get('text_domain') or results.get('geographical_focus'):
-            st.subheader("Context Analysis")
-            col1, col2 = st.columns(2)
-            with col1:
-                if results.get('text_domain'):
-                    st.write(f"**Domain:** {results['text_domain']}")
-            with col2:
-                if results.get('geographical_focus'):
-                    st.write(f"**Geography:** {results['geographical_focus']}")
-        
-        # Entities table
-        if entities:
-            st.subheader("Extracted Entities")
-            
+        # Results table
+        if results:
             df_data = []
-            for entity in entities:
-                links = entity.get('links', {})
-                coords = entity.get('coordinates', {})
-                priority = links.get('priority', 'unknown')
-                
+            for entity in results:
                 row = {
-                    'Entity': entity.get('text', ''),
-                    'Type': entity.get('type', ''),
+                    'Entity': entity['text'],
+                    'Type': entity['type'],
                     'Confidence': f"{entity.get('confidence', 0):.1%}",
-                    'Coordinates': f"{coords.get('latitude', 'N/A')}, {coords.get('longitude', 'N/A')}" if coords.get('latitude') else 'None',
-                    'Link Priority': priority,
-                    'Reasoning': entity.get('reasoning', '')[:100] + "..." if len(entity.get('reasoning', '')) > 100 else entity.get('reasoning', '')
+                    'Source': entity.get('source', 'unknown'),
+                    'Coordinates': f"{entity.get('latitude', 'N/A')}, {entity.get('longitude', 'N/A')}" if entity.get('latitude') else 'None'
                 }
                 df_data.append(row)
             
             df = pd.DataFrame(df_data)
             st.dataframe(df, use_container_width=True)
-            
-            # Show links and coordinates for each entity
-            with st.expander("Entity Links & Coordinates"):
-                for entity in entities:
-                    st.write(f"**{entity.get('text')}** ({entity.get('type')})")
-                    
-                    # Links
-                    links = entity.get('links', {})
-                    if links.get('pelagios_search'):
-                        st.write(f"[Pleiades Search]({links['pelagios_search']})")
-                    if links.get('wikipedia_url'):
-                        st.write(f"[Wikipedia]({links['wikipedia_url']})")
-                    if links.get('wikidata_search'):
-                        st.write(f"Wikidata search: `{links['wikidata_search']}`")
-                    
-                    # Coordinates
-                    coords = entity.get('coordinates', {})
-                    if coords.get('latitude') and coords.get('longitude'):
-                        lat, lon = coords['latitude'], coords['longitude']
-                        precision = coords.get('precision', 'unknown')
-                        source = coords.get('source', 'unknown')
-                        notes = coords.get('notes', '')
-                        
-                        st.write(f"**Coordinates:** {lat}, {lon}")
-                        st.write(f"   • **Precision:** {precision}")
-                        st.write(f"   • **Source:** {source}")
-                        if notes:
-                            st.write(f"   • **Notes:** {notes}")
-                        
-                        # Show map link
-                        map_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=12"
-                        st.write(f"   • [View on Map]({map_url})")
-                    else:
-                        st.write("No coordinates available")
-                    
-                    st.write("---")
 
     def run(self):
-        """Run the application."""
-        # Custom CSS
+        """Run the sustainable application."""
+        # Farrow & Ball styling
         st.markdown("""
         <style>
         .stApp { background-color: #F5F0DC !important; }
@@ -495,9 +550,7 @@ class StreamlitApp:
             border-radius: 8px !important;
             font-weight: 600 !important;
         }
-        .stButton > button:hover {
-            background-color: #B5998A !important;
-        }
+        .stButton > button:hover { background-color: #B5998A !important; }
         </style>
         """, unsafe_allow_html=True)
         
@@ -505,13 +558,30 @@ class StreamlitApp:
         domain = self.render_sidebar()
         text = self.render_input()
         
-        if st.button("Extract Entities with Pure Prompts", type="primary", use_container_width=True):
+        if st.button("Extract Entities Sustainably", type="primary", use_container_width=True):
             if text.strip():
-                with st.spinner("Sending comprehensive prompt to language model..."):
-                    results = self.extractor.extract_and_link_entities(text, domain)
-                    st.session_state.results = results
+                with st.spinner("Using progressive extraction tiers..."):
+                    # Extract entities
+                    entities = self.extractor.extract_entities(text, domain)
+                    
+                    # Add linking and geocoding
+                    entities = self.extractor.add_efficient_linking(entities)
+                    entities = self.extractor.add_efficient_geocoding(entities)
+                    
+                    st.session_state.results = entities
+                    
+                    # Show which tier was used
+                    metrics = self.extractor.get_sustainability_metrics()
+                    if metrics['tier1_calls'] > 0:
+                        st.success("Tier 1 (efficient) extraction succeeded!")
+                    elif metrics['tier2_calls'] > 0:
+                        st.info("Tier 2 (moderate) extraction used")
+                    elif metrics['tier3_calls'] > 0:
+                        st.warning("Tier 3 (complex) extraction required")
+                    else:
+                        st.info("Local fallback patterns used (zero energy)")
             else:
-                st.warning("Please enter some text to analyze.")
+                st.warning("Please enter text to analyze.")
         
         if st.session_state.results:
             self.render_results(st.session_state.results)
@@ -519,7 +589,7 @@ class StreamlitApp:
 
 def main():
     """Main function."""
-    app = StreamlitApp()
+    app = SustainableApp()
     app.run()
 
 
