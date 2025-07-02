@@ -1,511 +1,201 @@
 #!/usr/bin/env python3
 """
-Sustainable Generic Prompt Engineering Entity Extraction
+Pure Prompt-Based Entity Extraction and Linking
 
-A sustainable approach using:
-1. Efficient prompt caching
-2. Batch processing when possible
-3. Smart model selection
-4. Generic prompting (no hardcoded patterns)
-
-Author: Sustainable Generic AI Version
-Version: 3.0
+No hardcoding - everything is handled by comprehensive prompts sent to language models.
+The LLM handles extraction, classification, and linking instructions all in one call.
 """
 
 import streamlit as st
+import requests
+import json
+import time
+from typing import List, Dict, Any, Optional
+import pandas as pd
+import hashlib
 
-# Configure Streamlit page FIRST
+# Configure Streamlit page
 st.set_page_config(
-    page_title="Sustainable Entity Extraction",
+    page_title="Pure Prompt Entity Extraction",
     layout="centered",  
     initial_sidebar_state="collapsed" 
 )
 
-# Authentication section (keeping your existing auth code)
+# Simplified authentication (remove if not needed)
 try:
     import streamlit_authenticator as stauth
     import yaml
     from yaml.loader import SafeLoader
     import os
     
-    if not os.path.exists('config.yaml'):
-        st.error("Authentication required: config.yaml file not found!")
-        st.info("Please ensure config.yaml is in the same directory as this app.")
-        st.stop()
-    
-    with open('config.yaml') as file:
-        config = yaml.load(file, Loader=SafeLoader)
-
-    authenticator = stauth.Authenticate(
-        config['credentials'],
-        config['cookie']['name'],
-        config['cookie']['key'],
-        config['cookie']['expiry_days']
-    )
-
-    if 'authentication_status' in st.session_state and st.session_state['authentication_status']:
-        name = st.session_state['name']
-        authenticator.logout("Logout", "sidebar")
-    else:
-        try:
-            login_result = None
-            try:
-                login_result = authenticator.login(location='main')
-            except TypeError:
-                try:
-                    login_result = authenticator.login('Login', 'main')
-                except TypeError:
-                    login_result = authenticator.login()
-            
-            if login_result is None:
-                if 'authentication_status' in st.session_state:
-                    auth_status = st.session_state['authentication_status']
-                    if auth_status == False:
-                        st.error("Username/password is incorrect")
-                    elif auth_status == None:
-                        st.warning("Please enter your username and password")
-                    elif auth_status == True:
-                        st.rerun()
-                else:
-                    st.warning("Please enter your username and password")
-                st.stop()
-            elif isinstance(login_result, tuple) and len(login_result) == 3:
-                name, auth_status, username = login_result
-                st.session_state['authentication_status'] = auth_status
-                st.session_state['name'] = name
-                st.session_state['username'] = username
-                
-                if auth_status == True:
-                    st.rerun()
-                elif auth_status == False:
-                    st.error("Username/password is incorrect")
-                    st.stop()
-            else:
-                st.error(f"Unexpected login result format: {login_result}")
-                st.stop()
-                
-        except Exception as login_error:
-            st.error(f"Login method error: {login_error}")
-            st.stop()
+    if os.path.exists('config.yaml'):
+        with open('config.yaml') as file:
+            config = yaml.load(file, Loader=SafeLoader)
         
-except ImportError:
-    st.error("Authentication required: streamlit-authenticator not installed!")
-    st.stop()
-except Exception as e:
-    st.error(f"Authentication error: {e}")
-    st.stop()
+        authenticator = stauth.Authenticate(
+            config['credentials'],
+            config['cookie']['name'], 
+            config['cookie']['key'],
+            config['cookie']['expiry_days']
+        )
+        
+        if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
+            authenticator.login(location='main')
+            if not st.session_state.get('authentication_status'):
+                st.stop()
+        else:
+            authenticator.logout("Logout", "sidebar")
+            
+except (ImportError, FileNotFoundError):
+    # Skip authentication if not available
+    pass
 
-import pandas as pd
-import json
-import hashlib
-from typing import List, Dict, Any, Optional
-import requests
-import time
-import re
-
-
-class SustainablePromptExtractor:
+class PurePromptEntityExtractor:
     """
-    Sustainable entity extraction using intelligent prompt engineering.
-    Focuses on efficiency, caching, and minimal energy usage.
+    Entity extraction using only comprehensive prompts - zero hardcoding.
     """
     
     def __init__(self):
-        """Initialize the sustainable prompt extractor."""
-        self.colors = {
-            'PERSON': '#BF7B69',
-            'ORGANIZATION': '#9fd2cd',
-            'GPE': '#C4C3A2',
-            'LOCATION': '#EFCA89',
-            'FACILITY': '#C3B5AC',
-            'ADDRESS': '#CCBEAA'
-        }
+        if 'extraction_cache' not in st.session_state:
+            st.session_state.extraction_cache = {}
         
-        # Sustainability tracking
-        self.energy_metrics = {
-            'api_calls_made': 0,
-            'cache_hits': 0,
-            'total_tokens_processed': 0
-        }
-        
-        # Initialize cache
-        if 'prompt_cache' not in st.session_state:
-            st.session_state.prompt_cache = {}
+        self.api_calls_made = 0
 
-    def extract_entities(self, text: str, domain_hint: str = "") -> List[Dict[str, Any]]:
+    def extract_and_link_entities(self, text: str, domain_context: str = "") -> Dict[str, Any]:
         """
-        Extract entities using sustainable prompt engineering with robust fallbacks.
+        Extract and link entities using a single comprehensive prompt.
+        
+        Args:
+            text: Input text to analyze
+            domain_context: Optional domain hint
+            
+        Returns:
+            Complete results including entities with links
         """
-        # Check cache first (zero energy cost)
-        cache_key = self._get_cache_key(text, domain_hint)
-        if cache_key in st.session_state.prompt_cache:
-            self.energy_metrics['cache_hits'] += 1
-            print(f"Cache hit - zero energy used")
-            return st.session_state.prompt_cache[cache_key]
+        # Check cache
+        cache_key = hashlib.md5(f"{text}_{domain_context}".encode()).hexdigest()
+        if cache_key in st.session_state.extraction_cache:
+            return st.session_state.extraction_cache[cache_key]
         
-        debug_mode = st.session_state.get('debug_mode', False)
+        # Create comprehensive prompt
+        prompt = self._create_comprehensive_prompt(text, domain_context)
         
-        if debug_mode:
-            st.write("**Starting entity extraction**")
-            st.write(f"Text preview: {text[:200]}...")
-            st.write(f"Domain hint: {domain_hint}")
+        # Send to language model
+        response = self._call_language_model(prompt)
         
-        # Use multiple robust prompting strategies
-        entities = []
-        
-        # Strategy 1: Historical-optimized prompt
-        if domain_hint == "historical" or "ancient" in text.lower() or "persian" in text.lower():
-            entities = self._extract_historical_entities(text, debug_mode)
-            if entities:
-                if debug_mode:
-                    st.write(f"Historical extraction found {len(entities)} entities")
-                st.session_state.prompt_cache[cache_key] = entities
-                return entities
-        
-        # Strategy 2: Simple direct extraction
-        entities = self._extract_simple_entities(text, debug_mode)
-        if entities:
-            if debug_mode:
-                st.write(f"Simple extraction found {len(entities)} entities")
-            st.session_state.prompt_cache[cache_key] = entities
-            return entities
-        
-        # Strategy 3: Manual pattern extraction as absolute fallback
-        entities = self._extract_manual_fallback(text, debug_mode)
-        if entities:
-            if debug_mode:
-                st.write(f"Manual fallback found {len(entities)} entities")
-            st.session_state.prompt_cache[cache_key] = entities
-            return entities
-        
-        if debug_mode:
-            st.error("All extraction strategies failed")
-        
-        return []
-
-    def _extract_historical_entities(self, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
-        """Extract entities optimized for historical text."""
-        
-        prompt = f"""This is ancient historical text. Find all proper names of people, places, and peoples.
-
-Text: {text}
-
-List each name on a separate line with its type:
-- PERSON: individual people's names
-- PLACE: cities, regions, countries, seas
-- PEOPLE: groups, nations, tribes
-
-Format: Name | Type
-
-Names:"""
-
-        if debug_mode:
-            st.write("**Trying historical prompt**")
-        
-        response = self._make_simple_api_call(prompt, debug_mode)
         if response:
-            return self._parse_line_format(response, text, debug_mode)
+            # Parse the comprehensive response
+            results = self._parse_comprehensive_response(response, text)
+            
+            # Cache results
+            st.session_state.extraction_cache[cache_key] = results
+            
+            return results
         
-        return []
+        return {"entities": [], "summary": "No entities extracted", "confidence": 0}
 
-    def _extract_simple_entities(self, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
-        """Simple direct entity extraction."""
+    def _create_comprehensive_prompt(self, text: str, domain_context: str) -> str:
+        """Create a single comprehensive prompt that handles everything including geocoding."""
         
-        prompt = f"""Find all proper names in this text. List each name with its type.
+        domain_instruction = ""
+        if domain_context:
+            domain_instruction = f"\nDomain context: This text is about {domain_context}. Adjust your analysis accordingly."
+        
+        prompt = f"""You are an expert entity extraction, linking, and geocoding system. Analyze the following text and provide a comprehensive response.
 
+{domain_instruction}
+
+INSTRUCTIONS:
+1. Extract all named entities (people, places, organizations, facilities, addresses)
+2. For each entity, determine the most appropriate knowledge base links
+3. For geographical entities, provide coordinates when possible
+4. Provide linking priority: Pelagios (for historical/geographical) > Wikidata > Wikipedia
+5. Include confidence scores and reasoning
+6. Provide a summary of findings
+
+TEXT TO ANALYZE:
 {text}
 
-Format: Name (Type)
-Types: PERSON, PLACE, GROUP
+RESPONSE FORMAT:
+Return a JSON structure with this exact format:
 
-Names:"""
+{{
+  "entities": [
+    {{
+      "text": "entity name as it appears in text",
+      "type": "PERSON|ORGANIZATION|LOCATION|FACILITY|GPE|ADDRESS",
+      "start_position": number,
+      "confidence": 0.0-1.0,
+      "reasoning": "why this is an entity and this type",
+      "links": {{
+        "pelagios_search": "https://pleiades.stoa.org/places/search?SearchableText=entityname",
+        "wikidata_search": "suggested search term for wikidata",
+        "wikipedia_search": "suggested search term for wikipedia",
+        "priority": "pelagios|wikidata|wikipedia - which to try first"
+      }},
+      "coordinates": {{
+        "latitude": number_or_null,
+        "longitude": number_or_null,
+        "source": "historical_knowledge|modern_knowledge|uncertain",
+        "precision": "exact|approximate|region",
+        "notes": "explanation of coordinate source and accuracy"
+      }},
+      "geographical_context": "if applicable, geographical region or context",
+      "historical_period": "if applicable, time period or era"
+    }}
+  ],
+  "summary": "brief summary of what entities were found",
+  "text_domain": "inferred domain/topic of the text",
+  "extraction_confidence": 0.0-1.0,
+  "geographical_focus": "main geographical area if applicable",
+  "time_period": "main time period if applicable"
+}}
 
-        if debug_mode:
-            st.write("**Trying simple prompt**")
-        
-        response = self._make_simple_api_call(prompt, debug_mode)
-        if response:
-            return self._parse_parenthesis_format(response, text, debug_mode)
-        
-        return []
+LINKING GUIDELINES:
+- For ancient/historical places: prioritize Pelagios/Pleiades
+- For modern entities: prioritize Wikidata/Wikipedia  
+- For people: prioritize Wikipedia then Wikidata
+- For organizations: prioritize Wikidata then Wikipedia
+- Provide search terms that will find the most relevant results
+- Consider context when determining link priority
 
-    def _extract_manual_fallback(self, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
-        """Manual pattern fallback for when AI fails completely."""
-        
-        if debug_mode:
-            st.write("**Using manual pattern fallback**")
-        
-        entities = []
-        
-        # Look for capitalized words that could be proper nouns
-        import re
-        
-        # Find sequences of capitalized words
-        pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
-        matches = re.finditer(pattern, text)
-        
-        # Known entity indicators for historical text
-        person_indicators = ['daughter of', 'son of', 'king', 'according to']
-        place_indicators = ['came to', 'sailed to', 'from', 'called', 'sea', 'country']
-        people_indicators = ['men', 'say that', 'people']
-        
-        for match in matches:
-            entity_text = match.group()
-            start_pos = match.start()
-            
-            # Skip common words
-            if entity_text.lower() in ['the', 'these', 'among', 'other', 'most', 'many', 'which', 'when', 'their', 'what', 'now']:
-                continue
-            
-            # Determine type based on context
-            context_before = text[max(0, start_pos-50):start_pos].lower()
-            context_after = text[start_pos:start_pos+50].lower()
-            
-            entity_type = 'GPE'  # Default
-            
-            if any(indicator in context_before for indicator in person_indicators):
-                entity_type = 'PERSON'
-            elif any(indicator in context_before or indicator in context_after for indicator in place_indicators):
-                entity_type = 'LOCATION'
-            elif any(indicator in context_after for indicator in people_indicators):
-                entity_type = 'ORGANIZATION'
-            
-            entities.append({
-                'text': entity_text,
-                'type': entity_type,
-                'start': start_pos,
-                'end': start_pos + len(entity_text)
-            })
-            
-            if debug_mode:
-                st.write(f"Manual pattern found: {entity_text} ({entity_type})")
-        
-        # Remove duplicates and common false positives
-        filtered_entities = []
-        seen_texts = set()
-        
-        for entity in entities:
-            if entity['text'] not in seen_texts and len(entity['text']) > 2:
-                seen_texts.add(entity['text'])
-                filtered_entities.append(entity)
-        
-        return filtered_entities[:20]  # Limit to prevent noise
+GEOCODING GUIDELINES:
+- Provide coordinates for any recognizable geographical entity
+- For historical places, use your knowledge of ancient geography
+- For modern places, use current geographical knowledge
+- Indicate coordinate source: historical_knowledge, modern_knowledge, or uncertain
+- Specify precision: exact (for specific sites), approximate (for general areas), region (for large areas)
+- Include explanatory notes about coordinate accuracy and source
+- Examples:
+  * Ancient city: provide approximate historical location
+  * Modern city: provide city center coordinates
+  * Region/country: provide central coordinates with "region" precision
+  * Uncertain locations: mark as uncertain with best estimate
 
-    def _make_simple_api_call(self, prompt: str, debug_mode: bool = False) -> str:
-        """Simplified API call with better error handling."""
-        
-        models = ["google/flan-t5-large", "google/flan-t5-base"]
-        
-        for model in models:
-            try:
-                if debug_mode:
-                    st.write(f"Trying model: {model}")
-                
-                url = f"https://api-inference.huggingface.co/models/{model}"
-                payload = {
-                    "inputs": prompt,
-                    "parameters": {
-                        "max_length": 200,
-                        "temperature": 0.3,
-                        "do_sample": True
-                    }
-                }
-                
-                response = requests.post(url, json=payload, timeout=20)
-                
-                if response.status_code == 503:
-                    if debug_mode:
-                        st.warning(f"Model {model} loading, trying next...")
-                    continue
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    if isinstance(result, list) and len(result) > 0:
-                        response_text = result[0].get("generated_text", "")
-                        if response_text and len(response_text) > 10:
-                            if debug_mode:
-                                st.write(f"Got response from {model}")
-                                st.code(response_text[:500])
-                            return response_text
-                
-                if debug_mode:
-                    st.write(f"Failed: {response.status_code}")
-                
-            except Exception as e:
-                if debug_mode:
-                    st.write(f"Error with {model}: {str(e)}")
-                continue
-        
-        if debug_mode:
-            st.error("All API calls failed")
-        return ""
+COORDINATE EXAMPLES:
+- "Argos": {{"latitude": 37.6333, "longitude": 22.7333, "source": "historical_knowledge", "precision": "approximate", "notes": "Ancient Greek city, approximate center of archaeological site"}}
+- "London": {{"latitude": 51.5074, "longitude": -0.1278, "source": "modern_knowledge", "precision": "exact", "notes": "Modern city center coordinates"}}
+- "Hellas": {{"latitude": 39.0742, "longitude": 21.8243, "source": "historical_knowledge", "precision": "region", "notes": "Ancient Greece, central coordinates of historical region"}}
 
-    def _parse_line_format(self, response: str, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
-        """Parse 'Name | Type' format."""
-        entities = []
-        
-        lines = response.split('\n')
-        for line in lines:
-            if '|' in line:
-                parts = line.split('|')
-                if len(parts) >= 2:
-                    name = parts[0].strip().strip('-').strip()
-                    entity_type = parts[1].strip().upper()
-                    
-                    if len(name) > 1 and name in text:
-                        start_pos = text.find(name)
-                        entities.append({
-                            'text': name,
-                            'type': entity_type,
-                            'start': start_pos,
-                            'end': start_pos + len(name)
-                        })
-                        if debug_mode:
-                            st.write(f"Parsed: {name} ({entity_type})")
-        
-        return entities
-
-    def _parse_parenthesis_format(self, response: str, text: str, debug_mode: bool = False) -> List[Dict[str, Any]]:
-        """Parse 'Name (Type)' format."""
-        entities = []
-        
-        import re
-        pattern = r'([A-Za-z\s]+)\s*\(([^)]+)\)'
-        matches = re.findall(pattern, response)
-        
-        for name, entity_type in matches:
-            name = name.strip()
-            entity_type = entity_type.strip().upper()
-            
-            if len(name) > 1 and name in text:
-                start_pos = text.find(name)
-                entities.append({
-                    'text': name,
-                    'type': entity_type,
-                    'start': start_pos,
-                    'end': start_pos + len(name)
-                })
-                if debug_mode:
-                    st.write(f"Parsed: {name} ({entity_type})")
-        
-        return entities
-
-    def _get_cache_key(self, text: str, domain_hint: str) -> str:
-        """Generate cache key for text and domain combination."""
-        combined = f"{text}_{domain_hint}"
-        return hashlib.md5(combined.encode()).hexdigest()
-
-    def _extract_with_efficient_prompting(self, text: str, domain_hint: str) -> List[Dict[str, Any]]:
-        """Extract entities using efficient, generic prompting."""
-        
-        # Strategy 1: Single optimized prompt (most efficient)
-        entities = self._try_optimized_single_prompt(text, domain_hint)
-        if entities:
-            return entities
-        
-        # Strategy 2: Fallback to structured prompt
-        entities = self._try_structured_prompt(text, domain_hint)
-        if entities:
-            return entities
-        
-        # Strategy 3: Final fallback to simple prompt
-        entities = self._try_simple_prompt(text)
-        return entities
-
-    def _try_optimized_single_prompt(self, text: str, domain_hint: str) -> List[Dict[str, Any]]:
-        """Most efficient single prompt approach."""
-        
-        # Create domain-aware prompt
-        domain_context = self._get_domain_context(domain_hint)
-        
-        prompt = f"""Extract named entities from this text. Focus on {domain_context} if relevant.
-
-Return a JSON array with entities in this format:
-[{{"text": "entity", "type": "TYPE", "start": 0, "end": 5}}]
-
-Entity types: PERSON, ORGANIZATION, LOCATION, FACILITY, GPE, ADDRESS
-
-Text: {text}
+QUALITY STANDARDS:
+- Only extract clear, unambiguous named entities
+- Provide honest confidence scores
+- Include reasoning for each decision
+- Suggest the most appropriate knowledge bases for each entity type
+- For coordinates, be transparent about accuracy and source
+- Don't guess coordinates for completely unknown places
 
 JSON:"""
 
-        response = self._make_efficient_api_call(prompt, max_tokens=300)
-        if response:
-            return self._parse_json_response(response, text)
+        return prompt
+
+    def _call_language_model(self, prompt: str) -> Optional[str]:
+        """Call language model with the comprehensive prompt."""
         
-        return []
-
-    def _try_structured_prompt(self, text: str, domain_hint: str) -> List[Dict[str, Any]]:
-        """Structured prompt as fallback."""
-        
-        domain_context = self._get_domain_context(domain_hint)
-        
-        prompt = f"""Analyze this text and extract named entities. Context: {domain_context}
-
-Text: {text}
-
-List entities in this format:
-ENTITY_TYPE: entity name
-ENTITY_TYPE: another entity
-
-Types to find: PERSON, ORGANIZATION, LOCATION, FACILITY, GPE, ADDRESS
-
-Entities:"""
-
-        response = self._make_efficient_api_call(prompt, max_tokens=200)
-        if response:
-            return self._parse_structured_response(response, text)
-        
-        return []
-
-    def _try_simple_prompt(self, text: str) -> List[Dict[str, Any]]:
-        """Simple fallback prompt."""
-        
-        prompt = f"""Find all named entities in this text:
-
-{text}
-
-List them as: EntityName (TYPE)
-Types: PERSON, ORGANIZATION, LOCATION, FACILITY, GPE, ADDRESS
-
-Entities:"""
-
-        response = self._make_efficient_api_call(prompt, max_tokens=150)
-        if response:
-            return self._parse_simple_response(response, text)
-        
-        return []
-
-    def _get_domain_context(self, domain_hint: str) -> str:
-        """Generate generic domain context from hint."""
-        if not domain_hint:
-            return "general content"
-        
-        # Generic domain mapping
-        domain_contexts = {
-            'theatre': 'theatrical and performance venues, actors, directors',
-            'academic': 'researchers, universities, institutions',
-            'business': 'companies, executives, organizations',
-            'historical': 'historical figures, places, events',
-            'technical': 'technical terms, organizations, locations',
-            'medical': 'medical professionals, institutions, locations',
-            'legal': 'legal professionals, courts, organizations'
-        }
-        
-        # Find best match or use hint directly
-        for key, context in domain_contexts.items():
-            if key.lower() in domain_hint.lower():
-                return context
-        
-        return f"{domain_hint} related content"
-
-    def _make_efficient_api_call(self, prompt: str, max_tokens: int = 200) -> Optional[str]:
-        """Make efficient API call with minimal resource usage."""
-        
-        # Use smaller, more efficient model first
         models_to_try = [
-            "google/flan-t5-base",  # Smaller, more efficient
-            "google/flan-t5-large", # Fallback
+            "mistralai/Mistral-7B-Instruct-v0.1",
+            "google/flan-t5-large",
+            "microsoft/DialoGPT-medium"
         ]
         
         for model in models_to_try:
@@ -515,1151 +205,321 @@ Entities:"""
                 payload = {
                     "inputs": prompt,
                     "parameters": {
-                        "max_length": max_tokens,
+                        "max_new_tokens": 1000,
                         "temperature": 0.1,
-                        "do_sample": False  # More deterministic, less computation
+                        "do_sample": True,
+                        "return_full_text": False
                     }
                 }
                 
-                response = requests.post(url, json=payload, timeout=15)
+                response = requests.post(url, json=payload, timeout=30)
+                
+                if response.status_code == 503:
+                    st.warning(f"Model {model} is loading...")
+                    time.sleep(5)
+                    continue
                 
                 if response.status_code == 200:
                     result = response.json()
                     if isinstance(result, list) and len(result) > 0:
-                        self.energy_metrics['api_calls_made'] += 1
-                        self.energy_metrics['total_tokens_processed'] += len(prompt.split())
-                        
                         response_text = result[0].get("generated_text", "")
-                        print(f"API call successful with {model}")
-                        return response_text
+                        if response_text and len(response_text) > 50:
+                            self.api_calls_made += 1
+                            st.success(f"Response received from {model}")
+                            return response_text
                 
-                time.sleep(1)  # Brief pause between attempts
+                st.warning(f"No valid response from {model}")
                 
             except Exception as e:
-                print(f"Model {model} failed: {e}")
+                st.error(f"Error with {model}: {e}")
                 continue
         
+        st.error("All language models failed")
         return None
 
-    def _parse_json_response(self, response: str, original_text: str) -> List[Dict[str, Any]]:
-        """Parse JSON response efficiently."""
-        entities = []
-        debug_mode = st.session_state.get('debug_mode', False)
+    def _parse_comprehensive_response(self, response: str, original_text: str) -> Dict[str, Any]:
+        """Parse the comprehensive JSON response from the language model."""
         
-        if debug_mode:
-            st.write("**Debug: Parsing JSON Response**")
-        
-        # Find JSON in response
-        json_match = re.search(r'\[.*?\]', response, re.DOTALL)
-        if json_match:
-            if debug_mode:
-                st.write("Found JSON pattern in response")
-                st.code(json_match.group())
-            
-            try:
-                parsed = json.loads(json_match.group())
-                if debug_mode:
-                    st.write(f"Successfully parsed JSON with {len(parsed)} items")
-                
-                for item in parsed:
-                    if isinstance(item, dict) and 'text' in item and 'type' in item:
-                        entity_text = item['text'].strip()
-                        start_pos = original_text.find(entity_text)
-                        if start_pos != -1:
-                            entities.append({
-                                'text': entity_text,
-                                'type': item['type'].upper(),
-                                'start': start_pos,
-                                'end': start_pos + len(entity_text)
-                            })
-                        if debug_mode:
-                            st.write(f"Found: {entity_text} ({item['type']})")
-                        elif debug_mode:
-                            st.write(f"Could not locate: {entity_text}")
-            except json.JSONDecodeError as e:
-                if debug_mode:
-                    st.error(f"JSON parsing error: {e}")
-        elif debug_mode:
-            st.warning("No JSON pattern found in response")
-        
-        return entities
-
-    def _parse_structured_response(self, response: str, original_text: str) -> List[Dict[str, Any]]:
-        """Parse structured response efficiently."""
-        entities = []
-        debug_mode = st.session_state.get('debug_mode', False)
-        
-        if debug_mode:
-            st.write("**Debug: Parsing Structured Response**")
-        
-        # Parse "TYPE: entity" format
-        pattern = r'([A-Z]+):\s*([^\n]+)'
-        matches = re.findall(pattern, response)
-        
-        if debug_mode:
-            st.write(f"Found {len(matches)} structured matches")
-        
-        for entity_type, entity_text in matches:
-            entity_text = entity_text.strip()
-            start_pos = original_text.find(entity_text)
-            if start_pos != -1:
-                entities.append({
-                    'text': entity_text,
-                    'type': entity_type,
-                    'start': start_pos,
-                    'end': start_pos + len(entity_text)
-                })
-                if debug_mode:
-                    st.write(f"Found: {entity_text} ({entity_type})")
-            elif debug_mode:
-                st.write(f"Could not locate: {entity_text}")
-        
-        return entities
-
-    def _parse_simple_response(self, response: str, original_text: str) -> List[Dict[str, Any]]:
-        """Parse simple response efficiently."""
-        entities = []
-        debug_mode = st.session_state.get('debug_mode', False)
-        
-        if debug_mode:
-            st.write("**Debug: Parsing Simple Response**")
-        
-        # Parse "Entity (TYPE)" format
-        pattern = r'([^(]+)\s*\(([^)]+)\)'
-        matches = re.findall(pattern, response)
-        
-        if debug_mode:
-            st.write(f"Found {len(matches)} simple matches")
-        
-        for entity_text, entity_type in matches:
-            entity_text = entity_text.strip()
-            entity_type = entity_type.strip().upper()
-            start_pos = original_text.find(entity_text)
-            if start_pos != -1:
-                entities.append({
-                    'text': entity_text,
-                    'type': entity_type,
-                    'start': start_pos,
-                    'end': start_pos + len(entity_text)
-                })
-                if debug_mode:
-                    st.write(f"Found: {entity_text} ({entity_type})")
-            elif debug_mode:
-                st.write(f"Could not locate: {entity_text}")
-        
-        return entities
-
-    def get_coordinates(self, entities):
-        """Enhanced coordinate lookup with Pelagios priority and geographical context detection."""
-        import requests
-        import time
-        
-        # Detect geographical context from the full text
-        context_clues = self._detect_geographical_context(
-            st.session_state.get('processed_text', ''), 
-            entities
-        )
-        
-        if context_clues:
-            print(f"Detected geographical context: {', '.join(context_clues)}")
-        
-        place_types = ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION', 'ADDRESS']
-        
-        for entity in entities:
-            if entity['type'] in place_types:
-                # Skip if already has coordinates
-                if entity.get('latitude') is not None:
-                    continue
-                
-                # Priority 1: Try Pelagios coordinates first
-                if self._try_pelagios_coordinates(entity):
-                    continue
-                    
-                # Priority 2: Try geocoding with context
-                if self._try_contextual_geocoding(entity, context_clues):
-                    continue
-                    
-                # Priority 3: Fall back to standard geocoding
-                if self._try_python_geocoding(entity):
-                    continue
-                
-                # Priority 4: Try OpenStreetMap
-                if self._try_openstreetmap(entity):
-                    continue
-                    
-                # Priority 5: Try aggressive geocoding
-                self._try_aggressive_geocoding(entity)
-        
-        return entities
-
-    def _try_pelagios_coordinates(self, entity):
-        """Priority 1: Extract coordinates from Pelagios data if available."""
-        
-        # Check if entity has Pelagios coordinates
-        if entity.get('pelagios_coordinates'):
-            coords = entity['pelagios_coordinates']
-            if isinstance(coords, list) and len(coords) >= 2:
-                # Pelagios typically uses [longitude, latitude] format (GeoJSON standard)
-                try:
-                    longitude, latitude = coords[0], coords[1]
-                    entity['latitude'] = float(latitude)
-                    entity['longitude'] = float(longitude)
-                    entity['geocoding_source'] = 'pelagios_api'
-                    if entity.get('pelagios_title'):
-                        entity['location_name'] = entity['pelagios_title']
-                    print(f"Using Pelagios coordinates for {entity['text']}: {latitude}, {longitude}")
-                    return True
-                except (ValueError, IndexError) as e:
-                    print(f"Error parsing Pelagios coordinates for {entity['text']}: {e}")
-        
-        # If no coordinates in Pelagios data, but entity has Pelagios links, 
-        # we could try to fetch coordinates from Pelagios API
-        if entity.get('pelagios_api_url') and not entity.get('pelagios_coordinates'):
-            try:
-                # Try to get more detailed info from Pelagios API
-                response = requests.get(entity['pelagios_api_url'], timeout=8)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('geometry', {}).get('coordinates'):
-                        coords = data['geometry']['coordinates']
-                        if isinstance(coords, list) and len(coords) >= 2:
-                            longitude, latitude = coords[0], coords[1]
-                            entity['latitude'] = float(latitude)
-                            entity['longitude'] = float(longitude)
-                            entity['geocoding_source'] = 'pelagios_api_detailed'
-                            entity['location_name'] = data.get('title', entity['text'])
-                            print(f"Fetched detailed Pelagios coordinates for {entity['text']}: {latitude}, {longitude}")
-                            return True
-                
-                time.sleep(0.3)  # Rate limiting
-            except Exception as e:
-                print(f"Failed to fetch detailed Pelagios coordinates for {entity['text']}: {e}")
-        
-        return False
-
-    def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
-        """Detect geographical context from the text to improve geocoding accuracy."""
+        # Try to extract JSON from response
         import re
         
-        context_clues = []
-        text_lower = text.lower()
+        # Look for JSON structure
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
         
-        # Extract major cities/countries mentioned in the text
-        major_locations = {
-            # Countries
-            'uk': ['uk', 'united kingdom', 'britain', 'great britain'],
-            'usa': ['usa', 'united states', 'america', 'us '],
-            'canada': ['canada'],
-            'australia': ['australia'],
-            'france': ['france'],
-            'germany': ['germany'],
-            'italy': ['italy'],
-            'spain': ['spain'],
-            'japan': ['japan'],
-            'china': ['china'],
-            'india': ['india'],
-            
-            # Major cities that provide strong context
-            'london': ['london'],
-            'new york': ['new york', 'nyc', 'manhattan'],
-            'paris': ['paris'],
-            'tokyo': ['tokyo'],
-            'sydney': ['sydney'],
-            'toronto': ['toronto'],
-            'berlin': ['berlin'],
-            'rome': ['rome'],
-            'madrid': ['madrid'],
-            'beijing': ['beijing'],
-            'mumbai': ['mumbai'],
-            'los angeles': ['los angeles', 'la ', ' la,'],
-            'chicago': ['chicago'],
-            'boston': ['boston'],
-            'edinburgh': ['edinburgh'],
-            'glasgow': ['glasgow'],
-            'manchester': ['manchester'],
-            'birmingham': ['birmingham'],
-            'liverpool': ['liverpool'],
-            'bristol': ['bristol'],
-            'leeds': ['leeds'],
-            'cardiff': ['cardiff'],
-            'belfast': ['belfast'],
-            'dublin': ['dublin'],
-        }
-        
-        # Check for explicit mentions
-        for location, patterns in major_locations.items():
-            for pattern in patterns:
-                if pattern in text_lower:
-                    context_clues.append(location)
-                    break
-        
-        # Extract from entities that are already identified as places
-        for entity in entities:
-            if entity['type'] in ['GPE', 'LOCATION']:
-                entity_lower = entity['text'].lower()
-                # Add major locations found in entities
-                for location, patterns in major_locations.items():
-                    if entity_lower in patterns or any(p in entity_lower for p in patterns):
-                        if location not in context_clues:
-                            context_clues.append(location)
-        
-        # Look for postal codes to infer country
-        postal_patterns = {
-            'uk': [
-                r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b',  # UK postcodes
-                r'\b[A-Z]{2}\d{1,2}\s*\d[A-Z]{2}\b'
-            ],
-            'usa': [
-                r'\b\d{5}(-\d{4})?\b'  # US ZIP codes
-            ],
-            'canada': [
-                r'\b[A-Z]\d[A-Z]\s*\d[A-Z]\d\b'  # Canadian postal codes
-            ]
-        }
-        
-        for country, patterns in postal_patterns.items():
-            for pattern in patterns:
-                if re.search(pattern, text):
-                    if country not in context_clues:
-                        context_clues.append(country)
-                    break
-        
-        # Prioritize context (more specific first)
-        priority_order = ['london', 'new york', 'paris', 'tokyo', 'sydney', 'uk', 'usa', 'canada', 'australia', 'france', 'germany']
-        prioritized_context = []
-        
-        for priority_location in priority_order:
-            if priority_location in context_clues:
-                prioritized_context.append(priority_location)
-        
-        # Add remaining context clues
-        for clue in context_clues:
-            if clue not in prioritized_context:
-                prioritized_context.append(clue)
-        
-        return prioritized_context[:3]  # Return top 3 context clues
-
-    def get_sustainability_metrics(self) -> Dict[str, Any]:
-        """Get current sustainability metrics."""
-        return {
-            'api_calls': self.energy_metrics['api_calls_made'],
-            'cache_hits': self.energy_metrics['cache_hits'],
-            'cache_efficiency': self.energy_metrics['cache_hits'] / max(1, self.energy_metrics['api_calls_made'] + self.energy_metrics['cache_hits']) * 100,
-            'tokens_processed': self.energy_metrics['total_tokens_processed']
-        }
-
-    def _try_contextual_geocoding(self, entity, context_clues):
-        """Priority 2: Try geocoding with geographical context."""
-        import requests
-        import time
-        
-        if not context_clues:
-            return False
-        
-        # Create context-aware search terms
-        search_variations = [entity['text']]
-        
-        # Add context to search terms
-        for context in context_clues:
-            context_mapping = {
-                'uk': ['UK', 'United Kingdom', 'England', 'Britain'],
-                'usa': ['USA', 'United States', 'US'],
-                'canada': ['Canada'],
-                'australia': ['Australia'],
-                'france': ['France'],
-                'germany': ['Germany'],
-                'london': ['London, UK', 'London, England'],
-                'new york': ['New York, USA', 'New York, NY'],
-                'paris': ['Paris, France'],
-                'tokyo': ['Tokyo, Japan'],
-                'sydney': ['Sydney, Australia'],
-            }
-            
-            context_variants = context_mapping.get(context, [context])
-            for variant in context_variants:
-                search_variations.append(f"{entity['text']}, {variant}")
-        
-        # Remove duplicates while preserving order
-        search_variations = list(dict.fromkeys(search_variations))
-        
-        # Try geopy first with context
-        try:
-            from geopy.geocoders import Nominatim
-            from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-            
-            geocoder = Nominatim(user_agent="EntityLinker/1.0", timeout=10)
-            
-            for search_term in search_variations[:5]:  # Try top 5 variations
-                try:
-                    location = geocoder.geocode(search_term, timeout=10)
-                    if location:
-                        entity['latitude'] = location.latitude
-                        entity['longitude'] = location.longitude
-                        entity['location_name'] = location.address
-                        entity['geocoding_source'] = f'geopy_contextual'
-                        entity['search_term_used'] = search_term
-                        return True
-                    
-                    time.sleep(0.2)  # Rate limiting
-                except (GeocoderTimedOut, GeocoderServiceError):
-                    continue
-                    
-        except ImportError:
-            pass
-        
-        # Fall back to OpenStreetMap with context
-        for search_term in search_variations[:3]:  # Try top 3 with OSM
+        if json_match:
             try:
-                url = "https://nominatim.openstreetmap.org/search"
-                params = {
-                    'q': search_term,
-                    'format': 'json',
-                    'limit': 1,
-                    'addressdetails': 1
-                }
-                headers = {'User-Agent': 'EntityLinker/1.0'}
-            
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        result = data[0]
-                        entity['latitude'] = float(result['lat'])
-                        entity['longitude'] = float(result['lon'])
-                        entity['location_name'] = result['display_name']
-                        entity['geocoding_source'] = f'openstreetmap_contextual'
-                        entity['search_term_used'] = search_term
-                        return True
-            
-                time.sleep(0.3)  # Rate limiting
-            except Exception:
-                continue
+                json_str = json_match.group()
+                parsed = json.loads(json_str)
+                
+                # Validate and enhance the parsed results
+                if isinstance(parsed, dict) and 'entities' in parsed:
+                    # Fix entity positions if needed
+                    for entity in parsed.get('entities', []):
+                        if 'text' in entity:
+                            # Find actual position in text if not provided or incorrect
+                            entity_text = entity['text']
+                            actual_pos = original_text.find(entity_text)
+                            if actual_pos != -1:
+                                entity['start_position'] = actual_pos
+                                entity['end_position'] = actual_pos + len(entity_text)
+                            
+                            # Generate actual links if URLs not provided
+                            if 'links' in entity:
+                                links = entity['links']
+                                
+                                # Generate Pleiades search URL
+                                import urllib.parse
+                                encoded_text = urllib.parse.quote(entity_text)
+                                links['pelagios_search'] = f"https://pleiades.stoa.org/places/search?SearchableText={encoded_text}"
+                                
+                                # Generate Wikipedia URL
+                                wiki_encoded = urllib.parse.quote(entity_text.replace(' ', '_'))
+                                links['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{wiki_encoded}"
+                    
+                    return parsed
+                
+            except json.JSONDecodeError as e:
+                st.error(f"JSON parsing error: {e}")
         
-        return False
-    
-    def _try_python_geocoding(self, entity):
-        """Priority 3: Try Python geocoding libraries (geopy)."""
-        try:
-            from geopy.geocoders import Nominatim, ArcGIS
-            from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-            
-            geocoders = [
-                ('nominatim', Nominatim(user_agent="EntityLinker/1.0", timeout=10)),
-                ('arcgis', ArcGIS(timeout=10)),
-            ]
-            
-            for name, geocoder in geocoders:
-                try:
-                    location = geocoder.geocode(entity['text'], timeout=10)
-                    if location:
-                        entity['latitude'] = location.latitude
-                        entity['longitude'] = location.longitude
-                        entity['location_name'] = location.address
-                        entity['geocoding_source'] = f'geopy_{name}'
-                        return True
-                        
-                    time.sleep(0.3)
-                except (GeocoderTimedOut, GeocoderServiceError):
-                    continue
-                except Exception as e:
-                    continue
-                        
-        except ImportError:
-            pass
-        except Exception as e:
-            pass
+        # Fallback: try to extract entities from plain text
+        return self._fallback_parse(response, original_text)
+
+    def _fallback_parse(self, response: str, original_text: str) -> Dict[str, Any]:
+        """Fallback parsing if JSON fails."""
         
-        return False
-    
-    def _try_openstreetmap(self, entity):
-        """Priority 4: Fall back to direct OpenStreetMap Nominatim API."""
-        try:
-            url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                'q': entity['text'],
-                'format': 'json',
-                'limit': 1,
-                'addressdetails': 1
-            }
-            headers = {'User-Agent': 'EntityLinker/1.0'}
+        entities = []
         
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    result = data[0]
-                    entity['latitude'] = float(result['lat'])
-                    entity['longitude'] = float(result['lon'])
-                    entity['location_name'] = result['display_name']
-                    entity['geocoding_source'] = 'openstreetmap'
-                    return True
+        # Look for entity mentions in various formats
+        import re
         
-            time.sleep(0.3)  # Rate limiting
-        except Exception as e:
-            pass
-        
-        return False
-    
-    def _try_aggressive_geocoding(self, entity):
-        """Priority 5: Try more aggressive geocoding with different search terms."""
-        import requests
-        import time
-        
-        # Try variations of the entity name
-        search_variations = [
-            entity['text'],
-            f"{entity['text']}, UK",  # Add country for UK places
-            f"{entity['text']}, England",
-            f"{entity['text']}, Scotland",
-            f"{entity['text']}, Wales",
-            f"{entity['text']} city",
-            f"{entity['text']} town"
+        # Try to find entity patterns in the response
+        patterns = [
+            r'"text":\s*"([^"]+)".*?"type":\s*"([^"]+)"',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*\(([A-Z]+)\)',
+            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*-\s*([A-Z]+)'
         ]
         
-        for search_term in search_variations:
-            try:
-                url = "https://nominatim.openstreetmap.org/search"
-                params = {
-                    'q': search_term,
-                    'format': 'json',
-                    'limit': 1,
-                    'addressdetails': 1
-                }
-                headers = {'User-Agent': 'EntityLinker/1.0'}
-            
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        result = data[0]
-                        entity['latitude'] = float(result['lat'])
-                        entity['longitude'] = float(result['lon'])
-                        entity['location_name'] = result['display_name']
-                        entity['geocoding_source'] = f'openstreetmap_aggressive'
-                        entity['search_term_used'] = search_term
-                        return True
-            
-                time.sleep(0.2)  # Rate limiting between attempts
-            except Exception:
-                continue
-        
-        return False
-    def link_to_wikidata(self, entities):
-        """Efficient Wikidata linking with caching."""
-        for entity in entities:
-            cache_key = f"wikidata_{entity['text']}"
-            if cache_key in st.session_state.prompt_cache:
-                entity.update(st.session_state.prompt_cache[cache_key])
-                continue
-                
-            try:
-                url = "https://www.wikidata.org/w/api.php"
-                params = {
-                    'action': 'wbsearchentities',
-                    'format': 'json',
-                    'search': entity['text'],
-                    'language': 'en',
-                    'limit': 1,
-                    'type': 'item'
-                }
-                
-                response = requests.get(url, params=params, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('search') and len(data['search']) > 0:
-                        result = data['search'][0]
-                        link_data = {
-                            'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
-                            'wikidata_description': result.get('description', '')
-                        }
-                        entity.update(link_data)
-                        st.session_state.prompt_cache[cache_key] = link_data
-                
-                time.sleep(0.1)
-            except Exception:
-                pass
-        
-        return entities
-
-    def link_to_wikipedia(self, entities):
-        """Efficient Wikipedia linking with caching."""
-        for entity in entities:
-            if entity.get('wikidata_url'):
-                continue
-                
-            cache_key = f"wikipedia_{entity['text']}"
-            if cache_key in st.session_state.prompt_cache:
-                entity.update(st.session_state.prompt_cache[cache_key])
-                continue
-                
-            try:
-                search_url = "https://en.wikipedia.org/w/api.php"
-                search_params = {
-                    'action': 'query',
-                    'format': 'json',
-                    'list': 'search',
-                    'srsearch': entity['text'],
-                    'srlimit': 1
-                }
-                
-                response = requests.get(search_url, params=search_params, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('query', {}).get('search'):
-                        result = data['query']['search'][0]
-                        page_title = result['title']
-                        
+        for pattern in patterns:
+            matches = re.findall(pattern, response, re.IGNORECASE)
+            for match in matches:
+                if len(match) == 2:
+                    entity_text, entity_type = match[0].strip(), match[1].strip().upper()
+                    
+                    # Find position in original text
+                    start_pos = original_text.find(entity_text)
+                    if start_pos != -1:
                         import urllib.parse
-                        encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
-                        link_data = {
-                            'wikipedia_url': f"https://en.wikipedia.org/wiki/{encoded_title}",
-                            'wikipedia_title': page_title
-                        }
-                        entity.update(link_data)
-                        st.session_state.prompt_cache[cache_key] = link_data
-                
-                time.sleep(0.2)
-            except Exception:
-                pass
-        
-        return entities
-
-    def link_entity_to_pelagios(self, entity_text):
-        """Generate Pleiades search URL for entity."""
-        import urllib.parse
-        encoded_text = urllib.parse.quote(entity_text)
-        url = f"https://pleiades.stoa.org/places/search?SearchableText={encoded_text}"
-        return url
-
-    def link_to_pelagios(self, entities):
-        """Link entities to Pelagios network using both Pleiades and new API with precise matching."""
-        for entity in entities:
-            # Only link geographical/place entities to Pelagios
-            if entity['type'] not in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']:
-                continue
-                
-            cache_key = f"pelagios_{entity['text']}"
-            if cache_key in st.session_state.prompt_cache:
-                entity.update(st.session_state.prompt_cache[cache_key])
-                continue
-            
-            # Always add Pleiades search URL
-            entity['pleiades_search_url'] = self.link_entity_to_pelagios(entity['text'])
-            
-            # Try the new Pelagios API with precise matching
-            try:
-                api_url = "http://pelagios.dme.ait.ac.at/api"
-                search_endpoint = f"{api_url}/search"
-                
-                # Use exact phrase matching to avoid partial matches
-                search_term = f'"{entity["text"]}"'  # Wrap in quotes for exact match
-                
-                params = {
-                    'q': search_term,
-                    'format': 'json',
-                    'limit': 5  # Get more results to filter through
-                }
-                
-                response = requests.get(search_endpoint, params=params, timeout=8)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data and isinstance(data, list) and len(data) > 0:
+                        encoded_text = urllib.parse.quote(entity_text)
                         
-                        # Filter results for exact or close matches
-                        best_match = self._find_best_pelagios_match(entity['text'], data)
-                        
-                        if best_match:
-                            link_data = {
-                                'pelagios_api_url': best_match.get('uri', ''),
-                                'pelagios_title': best_match.get('title', ''),
-                                'pelagios_description': best_match.get('description', ''),
-                                'pelagios_coordinates': best_match.get('geometry', {}).get('coordinates', []),
-                                'pelagios_match_score': best_match.get('match_score', 0)
+                        entities.append({
+                            "text": entity_text,
+                            "type": entity_type,
+                            "start_position": start_pos,
+                            "end_position": start_pos + len(entity_text),
+                            "confidence": 0.7,
+                            "reasoning": "Extracted from model response",
+                            "links": {
+                                "pelagios_search": f"https://pleiades.stoa.org/places/search?SearchableText={encoded_text}",
+                                "wikipedia_url": f"https://en.wikipedia.org/wiki/{urllib.parse.quote(entity_text.replace(' ', '_'))}",
+                                "priority": "pelagios" if entity_type in ["LOCATION", "GPE", "FACILITY"] else "wikipedia"
                             }
-                            entity.update(link_data)
-                            st.session_state.prompt_cache[cache_key] = link_data
-                            print(f"Pelagios API precise match found for {entity['text']}: {best_match.get('title')}")
-                        else:
-                            print(f"No precise Pelagios match for {entity['text']}")
-                    else:
-                        print(f"No Pelagios API results for {entity['text']}")
-                else:
-                    print(f"Pelagios API request failed with status {response.status_code}")
-                
-                time.sleep(0.3)  # Rate limiting
-                
-            except Exception as e:
-                print(f"Pelagios API linking failed for {entity['text']}: {e}")
-                # Still keep the Pleiades search URL even if API fails
-                pass
+                        })
         
-        return entities
-
-    def _find_best_pelagios_match(self, entity_text: str, pelagios_results: list) -> dict:
-        """
-        Find the best matching result from Pelagios API using generic matching criteria.
-        
-        Args:
-            entity_text: The entity we're looking for
-            pelagios_results: List of results from Pelagios API
-            
-        Returns:
-            Best matching result or None if no good match found
-        """
-        entity_lower = entity_text.lower().strip()
-        best_match = None
-        best_score = 0
-        
-        for result in pelagios_results:
-            title = result.get('title', '').lower().strip()
-            description = result.get('description', '').lower().strip()
-            
-            # Skip if no title
-            if not title:
-                continue
-            
-            # Calculate match score based purely on text similarity
-            match_score = 0
-            
-            # Exact title match (highest score)
-            if title == entity_lower:
-                match_score = 100
-            # Title starts with entity
-            elif title.startswith(entity_lower):
-                # Higher score if followed by space (complete word)
-                if len(title) > len(entity_lower) and title[len(entity_lower)] == ' ':
-                    match_score = 90
-                else:
-                    match_score = 85
-            # Entity is complete word in title
-            elif f" {entity_lower} " in f" {title} ":
-                match_score = 80
-            # Title ends with entity
-            elif title.endswith(f" {entity_lower}"):
-                match_score = 75
-            # Partial match - check if significant
-            elif entity_lower in title:
-                # Score based on how much of the title the entity represents
-                overlap_ratio = len(entity_lower) / len(title)
-                if overlap_ratio > 0.5:
-                    match_score = 70
-                elif overlap_ratio > 0.3:
-                    match_score = 50
-                else:
-                    match_score = 30
-            
-            # Simple length-based quality indicator
-            # Prefer shorter, more specific titles over very long ones
-            word_count = len(title.split())
-            if word_count <= 3:
-                match_score += 10  # Bonus for concise titles
-            elif word_count > 8:
-                match_score -= 15  # Penalty for very long titles
-            
-            # Keep track of best match
-            if match_score > best_score:
-                best_score = match_score
-                best_match = result.copy()
-                best_match['match_score'] = match_score
-        
-        # Only return matches that meet a reasonable threshold
-        if best_match and best_score >= 40:
-            print(f"Pelagios match for {entity_text}: {best_match.get('title')} (score: {best_score})")
-            return best_match
-        
-        return None
+        return {
+            "entities": entities,
+            "summary": f"Fallback parsing found {len(entities)} entities",
+            "extraction_confidence": 0.6,
+            "text_domain": "unknown"
+        }
 
 
-class StreamlitSustainableApp:
-    """Streamlit app for sustainable entity extraction."""
+class StreamlitApp:
+    """Streamlit app for pure prompt entity extraction."""
     
     def __init__(self):
-        """Initialize the app."""
-        self.extractor = SustainablePromptExtractor()
+        self.extractor = PurePromptEntityExtractor()
         
         # Initialize session state
-        if 'entities' not in st.session_state:
-            st.session_state.entities = []
-        if 'processed_text' not in st.session_state:
-            st.session_state.processed_text = ""
-        if 'html_content' not in st.session_state:
-            st.session_state.html_content = ""
-        if 'analysis_title' not in st.session_state:
-            st.session_state.analysis_title = "text_analysis"
-        if 'last_processed_hash' not in st.session_state:
-            st.session_state.last_processed_hash = ""
+        if 'results' not in st.session_state:
+            st.session_state.results = None
 
     def render_header(self):
-        """Render the application header with logo."""
-        # Display logo if it exists
+        """Render application header."""
+        # Logo
         try:
-            # Try to load and display the logo
-            logo_path = "logo.png"  # You can change this filename as needed
-            if os.path.exists(logo_path):
-                # Logo naturally aligns to the left without columns
-                st.image(logo_path, width=300)  # Adjust width as needed
-            else:
-                # If logo file doesn't exist, show a placeholder or message
-                st.info("Place your logo.png file in the same directory as this app to display it here")
-        except Exception as e:
-            # If there's any error loading the logo, continue without it
-            st.warning(f"Could not load logo: {e}")        
-        # Add some spacing after logo
-        st.markdown("<br>", unsafe_allow_html=True)
+            if os.path.exists("logo.png"):
+                st.image("logo.png", width=300)
+        except:
+            pass
         
-        st.header("Sustainable Entity Extraction")
-        st.markdown("**Generic prompt engineering with intelligent caching and minimal energy usage**")
-        
-        # Only show sustainability metrics if there's been some activity
-        metrics = self.extractor.get_sustainability_metrics()
-        if metrics['api_calls'] > 0 or metrics['cache_hits'] > 0:
-            st.subheader("Sustainability Metrics")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("API Calls", metrics['api_calls'])
-            with col2:
-                st.metric("Cache Hits", metrics['cache_hits'])
-            with col3:
-                st.metric("Cache Efficiency", f"{metrics['cache_efficiency']:.1f}%")
-            with col4:
-                st.metric("Tokens Used", metrics['tokens_processed'])
+        st.header("Pure Prompt Entity Extraction")
+        st.markdown("**Zero hardcoding - everything handled by language model prompts**")
 
     def render_sidebar(self):
-        """Render the sidebar with sustainability info."""
-        st.sidebar.subheader("Sustainability Features")
-        st.sidebar.info("• Intelligent caching reduces API calls\n• Smaller models for efficiency\n• Generic prompts (no hardcoding)\n• Batch processing when possible")
-        
-        st.sidebar.subheader("Knowledge Bases")
-        st.sidebar.info("Priority linking order:\n• Pelagios API (historical geography)\n• Pleiades Search (ancient places)\n• Wikidata (structured data)\n• Wikipedia (last resort)")
+        """Render sidebar."""
+        st.sidebar.subheader("Pure Prompt Approach")
+        st.sidebar.info("• Single comprehensive prompt handles everything\n• No hardcoded patterns or rules\n• Language model determines entity types and links\n• Completely generic and adaptable")
         
         st.sidebar.subheader("Domain Context")
-        domain_hint = st.sidebar.selectbox(
-            "Optional domain hint for better extraction:",
-            ["", "theatre", "academic", "business", "historical", "technical", "medical", "legal"],
-            help="Helps the AI understand context without hardcoded patterns"
+        domain = st.sidebar.selectbox(
+            "Optional context hint:",
+            ["", "historical", "academic", "business", "technical", "literary", "geographical"],
+            help="Optional hint to help the language model understand context"
         )
         
-        if 'domain_hint' not in st.session_state:
-            st.session_state.domain_hint = ""
-        st.session_state.domain_hint = domain_hint
-        
-        # Add debugging section
-        st.sidebar.subheader("Debug Mode")
-        debug_mode = st.sidebar.checkbox("Enable Debug Output", help="Shows detailed extraction process")
-        if 'debug_mode' not in st.session_state:
-            st.session_state.debug_mode = False
-        st.session_state.debug_mode = debug_mode
+        return domain
 
-    def render_input_section(self):
-        """Render the text input section."""
-        st.header("Input Text")
-        
-        analysis_title = st.text_input(
-            "Analysis Title (optional)",
-            placeholder="Enter a title for this analysis...",
-            help="This will be used for naming output files"
-        )
+    def render_input(self):
+        """Render input section."""
+        st.subheader("Input Text")
         
         # Sample text
-        sample_text = """Recording the Whitechapel Pavilion in 1961. 191-193 Whitechapel Road. theatre. Richard Southern's explanations enabled me to allocate names to the various pieces of apparatus. Since then, we have learned of complete surviving complexes at, for example, Her Majesty's theatre in London, the Citizens in Glasgow and, most importantly, the Tyne theatre in Newcastle, which has been restored to full working order twice by Dr David Wilmore."""
+        sample = """The Persian learned men say that the Phoenicians were the cause of the dispute. These came to our seas from the sea which is called Red, and having settled in the country which they still occupy, at once began to make long voyages. Among other places to which they carried Egyptian and Assyrian merchandise, they came to Argos, which was at that time preeminent in every way among the people of what is now called Hellas. The Phoenicians came to Argos, and set out their cargo. On the fifth or sixth day after their arrival, when their wares were almost all sold, many women came to the shore and among them especially the daughter of the king, whose name was Io (according to Persians and Greeks alike), the daughter of Inachus."""
         
-        text_input = st.text_area(
-            "Enter your text here:",
-            value=sample_text,
+        text = st.text_area(
+            "Text to analyze:",
+            value=sample,
             height=200,
-            placeholder="Paste your text here for sustainable entity extraction...",
-            help="The AI will use efficient prompts to extract entities generically"
+            help="The language model will extract entities and determine appropriate links"
         )
         
-        with st.expander("Or upload a text file"):
-            uploaded_file = st.file_uploader(
-                "Choose a text file",
-                type=['txt', 'md'],
-                help="Upload a plain text file (.txt) or Markdown file (.md)"
-            )
-            
-            if uploaded_file is not None:
-                try:
-                    uploaded_text = str(uploaded_file.read(), "utf-8")
-                    text_input = uploaded_text
-                    st.success(f"File uploaded successfully! ({len(uploaded_text)} characters)")
-                    if not analysis_title:
-                        import os
-                        default_title = os.path.splitext(uploaded_file.name)[0]
-                        st.session_state.suggested_title = default_title
-                except Exception as e:
-                    st.error(f"Error reading file: {e}")
-        
-        if not analysis_title and hasattr(st.session_state, 'suggested_title'):
-            analysis_title = st.session_state.suggested_title
-        elif not analysis_title:
-            analysis_title = "text_analysis"
-        
-        return text_input, analysis_title
+        return text
 
-    def process_text(self, text: str, title: str):
-        """Process text with sustainable extraction."""
-        if not text.strip():
-            st.warning("Please enter some text to analyze.")
+    def render_results(self, results):
+        """Render results section."""
+        if not results:
             return
         
-        # Check cache
-        import hashlib
-        text_hash = hashlib.md5(f"{text}_{st.session_state.domain_hint}".encode()).hexdigest()
+        st.subheader("Results")
         
-        if text_hash == st.session_state.last_processed_hash:
-            st.info("This text has already been processed. Results shown below.")
-            return
+        # Summary
+        if results.get('summary'):
+            st.info(f"**Summary:** {results['summary']}")
         
-        with st.spinner("Processing text with sustainable AI..."):
-            try:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # Extract entities
-                status_text.text("Extracting entities with efficient prompts...")
-                progress_bar.progress(30)
-                
-                entities = self.extractor.extract_entities(text, st.session_state.domain_hint)
-                
-                if not entities:
-                    st.warning("No entities were extracted.")
-                    return
-                
-                # Link to knowledge bases
-                status_text.text("Linking entities to knowledge bases...")
-                progress_bar.progress(60)
-                
-                entities = self.extractor.link_to_wikidata(entities)
-                
-                progress_bar.progress(70)
-                entities = self.extractor.link_to_wikipedia(entities)
-                
-                progress_bar.progress(80)
-                entities = self.extractor.link_to_pelagios(entities)
-                
-                # Step 4: Geocoding (after Pelagios linking to use Pelagios coordinates)
-                status_text.text("Getting coordinates for locations...")
-                progress_bar.progress(90)
-                place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION']]
-                
-                if place_entities:
-                    try:
-                        geocoded_entities = self.extractor.get_coordinates(place_entities)
-                        for geocoded_entity in geocoded_entities:
-                            for idx, entity in enumerate(entities):
-                                if (entity['text'] == geocoded_entity['text'] and 
-                                    entity['type'] == geocoded_entity['type'] and
-                                    entity['start'] == geocoded_entity['start']):
-                                    entities[idx] = geocoded_entity
-                                    break
-                    except Exception as e:
-                        st.warning(f"Some geocoding failed: {e}")
-                
-                progress_bar.progress(100)
-                
-                # Generate visualization
-                html_content = self.create_highlighted_html(text, entities)
-                
-                # Store results
-                st.session_state.entities = entities
-                st.session_state.processed_text = text
-                st.session_state.html_content = html_content
-                st.session_state.analysis_title = title
-                st.session_state.last_processed_hash = text_hash
-                
-                progress_bar.empty()
-                status_text.empty()
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.success(f"Found {len(entities)} entities!")
-                with col2:
-                    st.info("Powered by sustainable AI")
-                
-            except Exception as e:
-                st.error(f"Error processing text: {e}")
-
-    def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
-        """Create highlighted HTML visualization."""
-        import html as html_module
+        # Metrics
+        entities = results.get('entities', [])
+        geocoded_count = len([e for e in entities if e.get('coordinates', {}).get('latitude')])
         
-        sorted_entities = sorted(entities, key=lambda x: x['start'], reverse=True)
-        highlighted = html_module.escape(text)
+        col1, col2, col3, col4 = st.columns(4)
         
-        for entity in sorted_entities:
-            start = entity['start']
-            end = entity['end']
-            original_entity_text = text[start:end]
-            escaped_entity_text = html_module.escape(original_entity_text)
-            color = self.extractor.colors.get(entity['type'], '#E7E2D2')
-            
-            tooltip = f"Type: {entity['type']}"
-            if entity.get('wikidata_description'):
-                tooltip += f" | {entity['wikidata_description']}"
-            
-            # Create highlighted span with link (priority: Pelagios API > Pleiades Search > Wikidata > Wikipedia)
-            if entity.get('pelagios_api_url'):
-                url = html_module.escape(entity["pelagios_api_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            elif entity.get('pleiades_search_url'):
-                url = html_module.escape(entity["pleiades_search_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            elif entity.get('wikidata_url'):
-                url = html_module.escape(entity["wikidata_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            elif entity.get('wikipedia_url'):
-                url = html_module.escape(entity["wikipedia_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            else:
-                replacement = f'<span style="background-color: {color}; padding: 2px 4px; border-radius: 3px;" title="{tooltip}">{escaped_entity_text}</span>'
-            
-            text_before_entity = html_module.escape(text[:start])
-            text_entity_escaped = html_module.escape(text[start:end])
-            
-            escaped_start = len(text_before_entity)
-            escaped_end = escaped_start + len(text_entity_escaped)
-            
-            highlighted = highlighted[:escaped_start] + replacement + highlighted[escaped_end:]
-        
-        return highlighted
-
-    def render_results(self):
-        """Render the results section."""
-        if not st.session_state.entities:
-            st.info("Enter some text above and click 'Extract Entities' to see results.")
-            return
-        
-        entities = st.session_state.entities
-        
-        st.header("Results")
-        
-        # Show metrics
-        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Entities", len(entities))
+            st.metric("Entities Found", len(entities))
         with col2:
-            linked_count = len([e for e in entities if e.get('pelagios_api_url') or e.get('pleiades_search_url') or e.get('wikidata_url') or e.get('wikipedia_url')])
-            st.metric("Linked Entities", linked_count)
+            confidence = results.get('extraction_confidence', 0)
+            st.metric("Confidence", f"{confidence:.1%}")
         with col3:
-            geocoded_count = len([e for e in entities if e.get('latitude')])
-            st.metric("Geocoded Places", geocoded_count)
+            st.metric("Geocoded", geocoded_count)
+        with col4:
+            st.metric("API Calls", self.extractor.api_calls_made)
         
-        # Highlighted text
-        st.subheader("Highlighted Text")
-        if st.session_state.html_content:
-            st.markdown(st.session_state.html_content, unsafe_allow_html=True)
+        # Context information
+        if results.get('text_domain') or results.get('geographical_focus'):
+            st.subheader("Context Analysis")
+            col1, col2 = st.columns(2)
+            with col1:
+                if results.get('text_domain'):
+                    st.write(f"**Domain:** {results['text_domain']}")
+            with col2:
+                if results.get('geographical_focus'):
+                    st.write(f"**Geography:** {results['geographical_focus']}")
         
-        # Entity details
-        with st.expander("Entity Details", expanded=False):
-            if entities:
-                df_data = []
-                for entity in entities:
-                    links = []
-                    if entity.get('pelagios_api_url'):
-                        links.append("Pelagios API")
-                    if entity.get('pleiades_search_url'):
-                        links.append("Pleiades Search")
-                    if entity.get('wikidata_url'):
-                        links.append("Wikidata")
-                    if entity.get('wikipedia_url'):
-                        links.append("Wikipedia")
-                    
-                    row = {
-                        'Entity': entity['text'],
-                        'Type': entity['type'],
-                        'Links': ' | '.join(links) if links else 'None'
-                    }
-                    if entity.get('pelagios_description'):
-                        row['Description'] = entity['pelagios_description'][:100] + "..." if len(entity['pelagios_description']) > 100 else entity['pelagios_description']
-                    elif entity.get('wikidata_description'):
-                        row['Description'] = entity['wikidata_description'][:100] + "..." if len(entity['wikidata_description']) > 100 else entity['wikidata_description']
-                    df_data.append(row)
+        # Entities table
+        if entities:
+            st.subheader("Extracted Entities")
+            
+            df_data = []
+            for entity in entities:
+                links = entity.get('links', {})
+                coords = entity.get('coordinates', {})
+                priority = links.get('priority', 'unknown')
                 
-                df = pd.DataFrame(df_data)
-                st.dataframe(df, use_container_width=True)
+                row = {
+                    'Entity': entity.get('text', ''),
+                    'Type': entity.get('type', ''),
+                    'Confidence': f"{entity.get('confidence', 0):.1%}",
+                    'Coordinates': f"{coords.get('latitude', 'N/A')}, {coords.get('longitude', 'N/A')}" if coords.get('latitude') else 'None',
+                    'Link Priority': priority,
+                    'Reasoning': entity.get('reasoning', '')[:100] + "..." if len(entity.get('reasoning', '')) > 100 else entity.get('reasoning', '')
+                }
+                df_data.append(row)
+            
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True)
+            
+            # Show links and coordinates for each entity
+            with st.expander("Entity Links & Coordinates"):
+                for entity in entities:
+                    st.write(f"**{entity.get('text')}** ({entity.get('type')})")
+                    
+                    # Links
+                    links = entity.get('links', {})
+                    if links.get('pelagios_search'):
+                        st.write(f"[Pleiades Search]({links['pelagios_search']})")
+                    if links.get('wikipedia_url'):
+                        st.write(f"[Wikipedia]({links['wikipedia_url']})")
+                    if links.get('wikidata_search'):
+                        st.write(f"Wikidata search: `{links['wikidata_search']}`")
+                    
+                    # Coordinates
+                    coords = entity.get('coordinates', {})
+                    if coords.get('latitude') and coords.get('longitude'):
+                        lat, lon = coords['latitude'], coords['longitude']
+                        precision = coords.get('precision', 'unknown')
+                        source = coords.get('source', 'unknown')
+                        notes = coords.get('notes', '')
+                        
+                        st.write(f"**Coordinates:** {lat}, {lon}")
+                        st.write(f"   • **Precision:** {precision}")
+                        st.write(f"   • **Source:** {source}")
+                        if notes:
+                            st.write(f"   • **Notes:** {notes}")
+                        
+                        # Show map link
+                        map_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=12"
+                        st.write(f"   • [View on Map]({map_url})")
+                    else:
+                        st.write("No coordinates available")
+                    
+                    st.write("---")
 
     def run(self):
-        """Main application runner."""
-        # Add custom CSS for Farrow & Ball Slipper Satin background and your color scheme
+        """Run the application."""
+        # Custom CSS
         st.markdown("""
         <style>
-        .stApp {
-            background-color: #F5F0DC !important;
-        }
-        .main .block-container {
-            background-color: #F5F0DC !important;
-        }
-        .stSidebar {
-            background-color: #F5F0DC !important;
-        }
-        .stSelectbox > div > div {
-            background-color: white !important;
-        }
-        .stTextInput > div > div > input {
-            background-color: white !important;
-        }
-        .stTextArea > div > div > textarea {
-            background-color: white !important;
-        }
-        .stExpander {
-            background-color: white !important;
-            border: 1px solid #E0D7C0 !important;
-            border-radius: 4px !important;
-        }
-        .stDataFrame {
-            background-color: white !important;
-        }
+        .stApp { background-color: #F5F0DC !important; }
         .stButton > button {
             background-color: #C4A998 !important;
             color: black !important;
             border: none !important;
             border-radius: 8px !important;
             font-weight: 600 !important;
-            font-size: 16px !important;
-            height: 3rem !important;
-            width: 100% !important;
         }
         .stButton > button:hover {
             background-color: #B5998A !important;
-            color: black !important;
-            transform: translateY(-1px) !important;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
-        }
-        .stButton > button:active {
-            background-color: #A68977 !important;
-            color: black !important;
         }
         </style>
         """, unsafe_allow_html=True)
         
         self.render_header()
-        self.render_sidebar()
+        domain = self.render_sidebar()
+        text = self.render_input()
         
-        text_input, analysis_title = self.render_input_section()
-        
-        if st.button("Extract Entities", type="primary", use_container_width=True):
-            if text_input.strip():
-                self.process_text(text_input, analysis_title)
+        if st.button("Extract Entities with Pure Prompts", type="primary", use_container_width=True):
+            if text.strip():
+                with st.spinner("Sending comprehensive prompt to language model..."):
+                    results = self.extractor.extract_and_link_entities(text, domain)
+                    st.session_state.results = results
             else:
                 st.warning("Please enter some text to analyze.")
         
-        st.markdown("---")
-        self.render_results()
-        
-        # Footer
-        st.markdown("---")
-        st.markdown("""
-        <div style="text-align: center; color: #666; font-size: 0.9em; margin-top: 2rem;">
-            <p>Sustainable AI | Generic Prompt Engineering | Intelligent Caching</p>
-        </div>
-        """, unsafe_allow_html=True)
+        if st.session_state.results:
+            self.render_results(st.session_state.results)
 
 
 def main():
-    """Main function to run the Streamlit application."""
-    app = StreamlitSustainableApp()
+    """Main function."""
+    app = StreamlitApp()
     app.run()
 
 
