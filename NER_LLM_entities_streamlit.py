@@ -44,14 +44,60 @@ try:
             config['cookie']['expiry_days']
         )
         
-        if 'authentication_status' not in st.session_state or not st.session_state['authentication_status']:
-            authenticator.login(location='main')
-            if not st.session_state.get('authentication_status'):
-                st.stop()
-        else:
+        # Check if already authenticated via session state
+        if 'authentication_status' in st.session_state and st.session_state['authentication_status']:
+            name = st.session_state['name']
             authenticator.logout("Logout", "sidebar")
+            # Continue to app below...
+        else:
+            # Render login form
+            try:
+                # Try different login methods for compatibility
+                login_result = None
+                try:
+                    login_result = authenticator.login(location='main')
+                except TypeError:
+                    try:
+                        login_result = authenticator.login('Login', 'main')
+                    except TypeError:
+                        login_result = authenticator.login()
+                
+                # Handle the result
+                if login_result is None:
+                    # Check session state for authentication result
+                    if 'authentication_status' in st.session_state:
+                        auth_status = st.session_state['authentication_status']
+                        if auth_status == False:
+                            st.error("Username/password is incorrect")
+                        elif auth_status == None:
+                            st.warning("Please enter your username and password")
+                        elif auth_status == True:
+                            st.rerun()  # Refresh to show authenticated state
+                    else:
+                        st.warning("Please enter your username and password")
+                    st.stop()
+                elif isinstance(login_result, tuple) and len(login_result) == 3:
+                    name, auth_status, username = login_result
+                    # Store in session state
+                    st.session_state['authentication_status'] = auth_status
+                    st.session_state['name'] = name
+                    st.session_state['username'] = username
+                    
+                    if auth_status == True:
+                        st.rerun()  # Refresh to show authenticated state
+                    elif auth_status == False:
+                        st.error("Username/password is incorrect")
+                        st.stop()
+                else:
+                    st.error(f"Unexpected login result format: {login_result}")
+                    st.stop()
+                    
+            except Exception as login_error:
+                st.error(f"Login method error: {login_error}")
+                st.stop()
             
 except (ImportError, FileNotFoundError):
+    # Skip authentication if not available
     pass
 
 class SustainableEntityExtractor:
