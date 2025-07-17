@@ -11,3 +11,4 @@ lxml
 streamlit-authenticator==0.2.3
 plotly
 pyyaml
+llama-cpp-python==0.2.63
