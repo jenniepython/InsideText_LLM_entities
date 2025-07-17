@@ -1336,7 +1336,7 @@ The company works with suppliers like Foxconn in China and has development cente
             # Only highlight entities that have links, coordinates, or high confidence
             has_links = any(entity.get(key) for key in ['britannica_url', 'wikidata_url', 'wikipedia_url', 'openstreetmap_url'])
             has_coordinates = entity.get('latitude') is not None
-            high_confidence = entity.get('context_confidence', 0) > 0.6
+            high_confidence = float(entity.get('context_confidence', 0)) > 0.6
             
             if not (has_links or has_coordinates or high_confidence):
                 continue
