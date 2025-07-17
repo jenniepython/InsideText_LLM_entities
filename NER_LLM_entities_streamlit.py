@@ -1354,7 +1354,7 @@ The company works with suppliers like Foxconn in China and has development cente
                 tooltip_parts.append(f"Category: {entity['semantic_category']}")
             
             if entity.get('context_confidence'):
-                tooltip_parts.append(f"Confidence: {entity['context_confidence']:.2f}")
+                tooltip_parts.append(f"Confidence: {float(entity['context_confidence']):.2f}")
             
             if entity.get('extraction_method'):
                 tooltip_parts.append(f"Method: {entity['extraction_method']}")
