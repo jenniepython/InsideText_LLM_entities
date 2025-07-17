@@ -106,6 +106,20 @@ except Exception as e:
     st.info("Cannot proceed without proper authentication.")
     st.stop()
 
+import sys
+import subprocess
+
+# Install packages if not available
+try:
+    import torch
+    import transformers
+    import numpy
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "torch", "transformers", "numpy"])
+    import torch
+    import transformers
+    import numpy
+
 import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
