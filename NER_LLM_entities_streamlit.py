@@ -1454,7 +1454,7 @@ The company works with suppliers like Foxconn in China and has development cente
             st.metric("Linked Entities", linked_count)
         
         with col4:
-            avg_confidence = sum(e.get('context_confidence', 0) for e in entities) / len(entities) if entities else 0
+            avg_confidence = sum(float(e.get('context_confidence', 0)) if e.get('context_confidence') not in [None, ''] else 0 for e in entities) / len(entities) if entities else 0
             st.metric("Avg Confidence", f"{avg_confidence:.2f}")
         
         # Create two columns for charts
