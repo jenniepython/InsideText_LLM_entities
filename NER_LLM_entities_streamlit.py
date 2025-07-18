@@ -1443,7 +1443,7 @@ class StreamlitEntityLinker:
                 'Type': entity['type'],
                 'Method': entity.get('extraction_method', 'unknown'),
                 'Category': entity.get('semantic_category', 'general'),
-                'Confidence': f"{entity.get('context_confidence', 0):.2f}",
+                'Confidence': f"{float(entity.get('context_confidence', 0)):.2f}",
                 'Links': self.format_entity_links(entity),
                 'Context': entity.get('sentence_context', '')[:100] + "..." if entity.get('sentence_context', '') else ""
             }
@@ -1499,7 +1499,7 @@ class StreamlitEntityLinker:
                     st.write(f"- Type: {entity['type']}")
                     st.write(f"- Method: {entity.get('extraction_method', 'unknown')}")
                     st.write(f"- Category: {entity.get('semantic_category', 'general')}")
-                    st.write(f"- Confidence: {entity.get('context_confidence', 0):.2f}")
+                    st.write(f"- Confidence: {float(entity.get('context_confidence', 0)):.2f}")
                     st.write(f"- Position: {entity['start']}-{entity['end']}")
                     
                     if entity.get('context_keywords'):
