@@ -1404,7 +1404,7 @@ class StreamlitEntityLinker:
         st.header("Results")
         
         # Statistics
-        self.render_statistics(entities)
+        # self.render_statistics(entities)
         
         # Highlighted text
         st.subheader("Highlighted Text")
@@ -1428,69 +1428,6 @@ class StreamlitEntityLinker:
         with tab3:
             self.render_export_section(entities)
 
-    def render_statistics(self, entities: List[Dict[str, Any]]):
-        """Render enhanced statistics about the extracted entities."""
-        # Create columns for metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Entities", len(entities))
-        
-        with col2:
-            geocoded_count = len([e for e in entities if e.get('latitude')])
-            st.metric("Geocoded Places", geocoded_count)
-        
-        with col3:
-            linked_count = len([e for e in entities if any(e.get(key) for key in ['wikidata_url', 'wikipedia_url', 'britannica_url'])])
-            st.metric("Linked Entities", linked_count)
-        
-        with col4:
-            avg_confidence = sum(float(e.get('context_confidence', 0)) if e.get('context_confidence') not in [None, ''] else 0 for e in entities) / len(entities) if entities else 0
-            st.metric("Avg Confidence", f"{avg_confidence:.2f}")
-        
-        # Create two columns for charts
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Entity type distribution
-            type_counts = {}
-            for entity in entities:
-                entity_type = entity['type']
-                type_counts[entity_type] = type_counts.get(entity_type, 0) + 1
-            
-            if type_counts:
-                st.subheader("Entity Type Distribution")
-                type_df = pd.DataFrame(list(type_counts.items()), columns=['Type', 'Count'])
-                fig = px.bar(type_df, x='Type', y='Count', color='Type')
-                fig.update_layout(showlegend=False, height=300)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            # Extraction method distribution
-            method_counts = {}
-            for entity in entities:
-                method = entity.get('extraction_method', 'unknown')
-                method_counts[method] = method_counts.get(method, 0) + 1
-            
-            if method_counts:
-                st.subheader("Extraction Methods")
-                method_df = pd.DataFrame(list(method_counts.items()), columns=['Method', 'Count'])
-                fig = px.pie(method_df, values='Count', names='Method', title="Extraction Method Distribution")
-                fig.update_layout(height=300)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # Semantic categories
-        category_counts = {}
-        for entity in entities:
-            category = entity.get('semantic_category', 'general')
-            category_counts[category] = category_counts.get(category, 0) + 1
-        
-        if len(category_counts) > 1:
-            st.subheader("Semantic Categories")
-            category_df = pd.DataFrame(list(category_counts.items()), columns=['Category', 'Count'])
-            fig = px.bar(category_df, x='Category', y='Count', color='Category')
-            fig.update_layout(showlegend=False, height=300)
-            st.plotly_chart(fig, use_container_width=True)
 
     def render_entity_summary(self, entities: List[Dict[str, Any]]):
         """Render a summary table of entities."""
