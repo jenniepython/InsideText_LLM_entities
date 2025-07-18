@@ -144,7 +144,7 @@ class LightweightEntityLinker:
     """
     
     def __init__(self):
-        """Initialize the LightweightEntityLinker."""
+        """Initialise the LightweightEntityLinker."""
         
         # Color scheme for different entity types in HTML output
         self.colors = {
@@ -164,7 +164,7 @@ class LightweightEntityLinker:
             'URL': '#E0D7C0'              # F&B Lime White darker
         }
         
-        # Initialize models
+        # Initialise models
         self.ner_model = None
         self._load_models()
 
@@ -184,12 +184,12 @@ class LightweightEntityLinker:
                         tokenizer=ner_model_name,
                         aggregation_strategy="simple"
                     )
-                    st.success("✅ NER model loaded successfully")
+                    st.success("dslim/bert-base-NER model loaded successfully")
                 except Exception as e:
                     st.error(f"Failed to load NER model: {e}")
                     # Fallback to using pattern matching only
                     self.ner_pipeline = None
-                    st.warning("⚠️ Using pattern-based entity extraction as fallback")
+                    st.warning("Using pattern-based entity extraction as fallback")
                     
         except ImportError:
             st.error("Required packages not installed. Please install:")
@@ -198,6 +198,7 @@ class LightweightEntityLinker:
         except Exception as e:
             st.error(f"Error loading models: {e}")
             st.stop()
+
 
     def _generate_contextual_analysis(self, text: str, entity_text: str, entity_type: str) -> Dict[str, Any]:
         """Generate contextual analysis using rule-based approaches."""
@@ -264,7 +265,7 @@ class LightweightEntityLinker:
         return entities
 
     def _map_entity_type(self, ner_label: str) -> str:
-        """Map NER model labels to our standardized types."""
+        """Map NER model labels to our standardised types."""
         mapping = {
             'PER': 'PERSON',
             'PERSON': 'PERSON',
@@ -387,7 +388,7 @@ class LightweightEntityLinker:
                 entity.update(context_info)
                 pattern_entities.append(entity)
         
-        # Company/Organization patterns (based on common suffixes)
+        # Company/Organisation patterns (based on common suffixes)
         org_patterns = [
             r'\b[A-Z][a-zA-Z\s&]+(?:Inc|LLC|Ltd|Corporation|Corp|Company|Co|Limited|plc|AG|GmbH|SA|SAS|BV|NV|AB|AS|Oy|SpA|Srl|SARL|SL|SLU|JSC|PJSC|OOO|ZAO|OAO|KG|eK|UG|mbH|SE|SCE|SCOP|SCP|SCS|SCA|SICAV|SICAF|SOPARFI|SPF|SIF|SICAR|RAIF|FIAR|PSF|CSS|CSSF|CSDB|UCITS|AIFMD|ESMA|EBA|EIOPA|CFTC|SEC|FINRA|MSRB|FICC|NSCC|DTC|OCC|CBOE|NYSE|NASDAQ|LSE|TSE|HKEX|SGX|ASX|JSE|BSE|NSE|KOSPI|NIKKEI|FTSE|DAX|CAC|IBEX|SMI|AEX|OMX|WIG|PX|BET|SOFIX|CROBEX|MONEX|BELEX|SASX|PFTS|RTS|MICEX|MOEX|TADAWUL|ADX|DFM|QE|BHB|MSM|KSE|CSE|DSE|ChiNext|STAR|SZSE|SHSE|BSE|NSE|KOSDAQ|MOTHERS|JASDAQ|OSE|TSE|HKEX|SGX|ASX|JSE|EGX|CASE|USE|DSE|GSE|NSE|BSE|MSE|ZSE|LSE|ISE|BIST|ATHEX|BVMF|BOVESPA|BMV|BCS|BVL|BVC|BYMA|COLCAP|IGBC|MERVAL|BOVESPA|B3|BVMF|BVCA|BVAL|BVAQ|BVMT|BVPG|BVMG|BVSP|BVGO|BVDF|BVCE|BVSC|BVPR|BVPE|BVPB|BVMS|BVMA|BVAP|BVAC|BVAA|BVTO|BVSE|BVRI|BVRO|BVRN|BVRS|BVPA|BVBA|BVAL|BVIT|BVSP|BVMF|BVCA|BVAQ|BVMT|BVPG|BVMG|BVSP|BVGO|BVDF|BVCE|BVSC|BVPR|BVPE|BVPB|BVMS|BVMA|BVAP|BVAC|BVAA|BVTO|BVSE|BVRI|BVRO|BVRN|BVRS|BVPA|BVBA|BVAL|BVIT)\b',
             r'\b[A-Z][a-zA-Z\s&]+(?:University|College|Institute|School|Foundation|Trust|Society|Association|Union|Federation|Alliance|Council|Board|Committee|Commission|Agency|Department|Ministry|Office|Bureau|Authority|Service|Group|Team|Club|Organization|Centre|Center)\b'
@@ -457,7 +458,7 @@ class LightweightEntityLinker:
         return True
 
     def _validate_place_or_org_entity(self, entity_text: str) -> bool:
-        """Validate place or organization entities."""
+        """Validate place or organisation entities."""
         # Should contain at least one capital letter
         if not any(c.isupper() for c in entity_text):
             return False
@@ -553,7 +554,7 @@ class LightweightEntityLinker:
         end = min(len(text), entity_pos + len(entity_text) + 100)
         context = text[start:end]
         
-        # Extract meaningful words (capitalized words and important terms)
+        # Extract meaningful words (capitalised words and important terms)
         keywords = []
         words = re.findall(r'\b[A-Z][a-zA-Z]+\b', context)
         keywords.extend(words)
@@ -988,7 +989,7 @@ class LightweightEntityLinker:
         if occurrences > 1:
             confidence_boost += 0.1
         
-        # Check if entity is properly capitalized
+        # Check if entity is properly capitalised
         if entity['text'][0].isupper() and entity['type'] in ['PERSON', 'ORGANIZATION', 'LOCATION']:
             confidence_boost += 0.1
         
@@ -1017,15 +1018,15 @@ class StreamlitEntityLinker:
     """
     Streamlit wrapper for the LightweightEntityLinker class.
     
-    Provides a web interface with additional visualization and
+    Provides a web interface with additional visualisation and
     export capabilities for entity analysis.
     """
     
     def __init__(self):
-        """Initialize the Streamlit Entity Linker."""
+        """Initialise the Streamlit Entity Linker."""
         self.entity_linker = LightweightEntityLinker()
         
-        # Initialize session state
+        # Initialise session state
         if 'entities' not in st.session_state:
             st.session_state.entities = []
         if 'processed_text' not in st.session_state:
@@ -1189,17 +1190,7 @@ class StreamlitEntityLinker:
         )
         
         # Sample text for demonstration
-        sample_text = """Apple Inc. is an American multinational technology company headquartered in Cupertino, California. 
-        
-Tim Cook serves as the CEO, while Steve Jobs was the co-founder. The company was founded in 1976 by Steve Jobs, Steve Wozniak, and Ronald Wayne.
-
-Apple's main campus is located at 1 Apple Park Way, Cupertino, CA 95014. The company is known for products like the iPhone, iPad, and Mac computers.
-
-In 2023, Apple reported revenue of $394.3 billion. The company has retail stores worldwide, including flagship stores in New York, London, and Tokyo.
-
-Contact information: For media inquiries, email press@apple.com or call (408) 996-1010. More information is available at https://www.apple.com.
-
-The company works with suppliers like Foxconn in China and has development centers in Austin, Texas and Cork, Ireland."""
+        sample_text = """The Persian learned men say that the Phoenicians were the cause of the dispute. These (they say) came to our seas from the sea which is called Red,1 and having settled in the country which they still occupy, at once began to make long voyages. Among other places to which they carried Egyptian and Assyrian merchandise, they came to Argos, [2] which was at that time preeminent in every way among the people of what is now called Hellas. The Phoenicians came to Argos, and set out their cargo. [3] On the fifth or sixth day after their arrival, when their wares were almost all sold, many women came to the shore and among them especially the daughter of the king, whose name was Io (according to Persians and Greeks alike), the daughter of Inachus. [4] As these stood about the stern of the ship bargaining for the wares they liked, the Phoenicians incited one another to set upon them. Most of the women escaped: Io and others were seized and thrown into the ship, which then sailed away for Egypt. 2."""
         
         # Text input area
         text_input = st.text_area(
@@ -1241,7 +1232,7 @@ The company works with suppliers like Foxconn in China and has development cente
     def process_text(self, text: str, title: str):
         """Process the input text using the LightweightEntityLinker."""
         if not text.strip():
-            st.warning("Please enter some text to analyze.")
+            st.warning("Please enter some text to analyse.")
             return
         
         # Check if we've already processed this exact text
@@ -1935,7 +1926,7 @@ The company works with suppliers like Foxconn in China and has development cente
             if text_input.strip():
                 self.process_text(text_input, analysis_title)
             else:
-                st.warning("Please enter some text to analyze.")
+                st.warning("Please enter some text to analyse.")
         
         # Add some spacing
         st.markdown("---")
