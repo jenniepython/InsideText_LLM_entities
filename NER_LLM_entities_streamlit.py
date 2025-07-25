@@ -15,6 +15,10 @@ st.set_page_config(
 
 # Hugging Face API setup (store your token securely)
 HF_API_TOKEN = os.getenv('HF_API_TOKEN')
+if HF_API_TOKEN is None:
+    st.error("HF_API_TOKEN is not set!")
+else:
+    st.success("HF_API_TOKEN is correctly set.")
 headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
