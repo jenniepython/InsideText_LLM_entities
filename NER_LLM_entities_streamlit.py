@@ -21,7 +21,8 @@ else:
     st.success("HF_API_TOKEN is correctly set.")
 headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 # API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+# API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
+API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
 
 # Function to query the LLM API
 def query_llm(prompt):
