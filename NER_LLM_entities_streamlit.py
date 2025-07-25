@@ -20,7 +20,8 @@ if HF_API_TOKEN is None:
 else:
     st.success("HF_API_TOKEN is correctly set.")
 headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+# API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
 
 # Function to query the LLM API
 def query_llm(prompt):
