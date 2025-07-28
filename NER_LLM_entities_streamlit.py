@@ -111,22 +111,30 @@ def create_json_ld(entities, original_text):
     return json_ld
 
 def create_html_output(entities, text):
-    html = ["<html><head><meta charset='utf-8'><title>NER Output</title></head><body>"]
-    html.append("<h2>Named Entities with Links</h2><ul>")
-    for ent in entities:
+    text_html = text
+    # Sort by descending start_pos to safely replace text
+    for ent in sorted(entities, key=lambda x: -x.get("start_pos", 0)):
         label = ent['type']
         value = ent['text']
         link = ""
-        if label == "PERSON":
-            link = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(value)}"
-        elif label == "ORGANIZATION":
+        if label == "PERSON" or label == "ORGANIZATION":
             link = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(value)}"
         elif label == "LOCATION" and ent.get("geocoding"):
             lat = ent['geocoding']['latitude']
             lon = ent['geocoding']['longitude']
             link = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=12"
-        html.append(f"<li><strong>{label}</strong>: <a href='{link}' target='_blank'>{value}</a></li>")
-    html.append("</ul><h3>Original Text</h3><p>{}</p>".format(text))
+        if link:
+            escaped_value = re.escape(value)
+            replacement = f"<a href='{link}' target='_blank'>{value}</a>"
+            text_html = re.sub(escaped_value, replacement, text_html, count=1)
+
+    html = ["<html><head><meta charset='utf-8'><title>NER Output</title></head><body>"]
+    html.append("<h2>Named Entities with Links</h2><ul>")
+    for ent in entities:
+        label = ent['type']
+        value = ent['text']
+        html.append(f"<li><strong>{label}</strong>: {value}</li>")
+    html.append(f"</ul><h3>Annotated Text</h3><p>{text_html}</p>")
     html.append("</body></html>")
     return "\n".join(html)
 
@@ -173,3 +181,4 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+
