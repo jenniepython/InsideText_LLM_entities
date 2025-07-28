@@ -33,25 +33,10 @@ headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
 # Model options - ONLY generative LLMs for prompting-based NER
 MODEL_OPTIONS = {
-    "Microsoft DialoGPT": {
-        "model_name": "microsoft/DialoGPT-medium",
-        "description": "Conversational AI model good for structured text"
-    },
     "Google Flan-T5": {
         "model_name": "google/flan-t5-base",
-        "description": "Text-to-text model excellent for professional writing"
-    },
-    "Salesforce BLIP": {
-        "model_name": "Salesforce/blip-image-captioning-base",
-        "description": "Multi-modal model (fallback to text generation)"
-    },
-    "GPT-2": {
-        "model_name": "gpt2",
-        "description": "Classic generative model for text completion"
-    },
-    "DistilBERT": {
-        "model_name": "distilbert-base-uncased",
-        "description": "Efficient transformer for text processing"
+        "description": "Text-to-text model",
+        "inference_api": True
     }
 }
 
