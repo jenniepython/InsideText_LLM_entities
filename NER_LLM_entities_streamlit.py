@@ -33,9 +33,9 @@ headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
 # Model options - ONLY generative LLMs for prompting-based NER
 MODEL_OPTIONS = {
-    "Google Flan-T5": {
-        "model_name": "google/flan-t5-base",
-        "description": "Text-to-text model",
+    "Google Flan-T5 (Small)": {
+        "model_name": "google/flan-t5-small",
+        "description": "Text-to-text model available via API",
         "inference_api": True
     }
 }
