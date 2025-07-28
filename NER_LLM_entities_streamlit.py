@@ -1,4 +1,17 @@
-#!/usr/bin/env python3
+# Test model availability
+if st.button("🔍 Test All Models"):
+    st.subheader("Testing model availability...")
+    working_models = []
+    
+    for model_name, model_url in MODEL_OPTIONS.items():
+        with st.container():
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.write(f"**{model_name}**")
+            with col2:
+                try:
+                    # Test with simple payload
+                    if#!/usr/bin/env python3
 """
 Streamlit App: Text -> NER -> Geocoding -> JSON-LD & HTML Output
 """
@@ -32,14 +45,14 @@ if HF_API_TOKEN is None:
 
 headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
-# Model options
+# Model options - ONLY generative LLMs for prompting-based NER
 MODEL_OPTIONS = {
-    "Qwen2.5-0.5B-Instruct": "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-0.5B-Instruct",
-    "Qwen2.5-1.5B-Instruct": "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-1.5B-Instruct",
-    "Qwen2-0.5B-Instruct": "https://api-inference.huggingface.co/models/Qwen/Qwen2-0.5B-Instruct",
-    "DistilBERT-NER": "https://api-inference.huggingface.co/models/dbmdz/bert-large-cased-finetuned-conll03-english",
+    "GPT-2": "https://api-inference.huggingface.co/models/gpt2",
+    "DistilGPT-2": "https://api-inference.huggingface.co/models/distilgpt2", 
+    "FLAN-T5-Small": "https://api-inference.huggingface.co/models/google/flan-t5-small",
+    "FLAN-T5-Base": "https://api-inference.huggingface.co/models/google/flan-t5-base",
     "T5-Small": "https://api-inference.huggingface.co/models/t5-small",
-    "GPT-2": "https://api-inference.huggingface.co/models/gpt2"
+    "T5-Base": "https://api-inference.huggingface.co/models/t5-base"
 }
 
 def query_llm(prompt, model_url, max_retries=3):
@@ -87,45 +100,65 @@ def query_llm(prompt, model_url, max_retries=3):
     
     raise Exception("Max retries exceeded")
 
-def use_dedicated_ner_model(text, model_url):
-    """Use a dedicated NER model"""
-    payload = {"inputs": text}
-    
+def test_model_availability(model_url):
+    """Test if model is available"""
     try:
-        response = requests.post(model_url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        result = response.json()
+        test_payload = {
+            "inputs": "Test input",
+            "parameters": {"max_new_tokens": 10}
+        }
+        response = requests.post(model_url, headers=headers, json=test_payload, timeout=15)
         
-        entities = []
-        if isinstance(result, list):
-            for entity in result:
-                entities.append({
-                    "text": entity.get("word", "").replace("##", ""),
-                    "type": entity.get("entity_group", entity.get("entity", "MISC")),
-                    "start_pos": entity.get("start", -1),
-                    "confidence": entity.get("score", 0.0)
-                })
-        
-        return entities
+        if response.status_code == 404:
+            return False, "Model not found"
+        elif response.status_code == 403:
+            return False, "Access forbidden - check API token"
+        elif response.status_code == 503:
+            return True, "Model loading (available but needs time)"
+        elif response.status_code == 200:
+            return True, "Model ready"
+        else:
+            return False, f"HTTP {response.status_code}"
     except Exception as e:
-        raise Exception(f"NER model error: {str(e)}")
+        return False, str(e)
+
+# Test model availability
+if st.button("🔍 Test All Models"):
+    st.subheader("Testing LLM availability...")
+    working_models = []
+    
+    for model_name, model_url in MODEL_OPTIONS.items():
+        with st.container():
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.write(f"**{model_name}**")
+            with col2:
+                available, message = test_model_availability(model_url)
+                if available:
+                    st.success(f"✓ {message}")
+                    working_models.append(model_name)
+                else:
+                    st.error(f"✗ {message}")
+    
+    if working_models:
+        st.info(f"Working models: {', '.join(working_models)}")
+    else:
+        st.warning("No models are currently accessible. Try checking your API token.")
 
 def construct_ner_prompt(text):
-    """Optimized prompt for NER"""
-    prompt = f"""<|im_start|>system
-You are an expert at named entity recognition. Extract ALL named entities from the given text.
+    """General prompt that works with most models"""
+    prompt = f"""Extract named entities from the following text. Return only a JSON array with objects having "text", "type", and "start_pos" fields.
 
-For each entity, provide:
-- "text": the exact entity text
-- "type": PERSON, ORGANIZATION, LOCATION, DATE, TIME, MONEY, PERCENT, or MISC
-- "start_pos": character position (estimate if needed)
+Entity types: PERSON, ORGANIZATION, LOCATION, DATE, TIME, MONEY, PERCENT, MISC
 
-Return ONLY a valid JSON array. No other text.<|im_end|>
-<|im_start|>user
-Text: "{text}"<|im_end|>
-<|im_start|>assistant
-["""
+Text: "{text}"
+
+JSON array:"""
     return prompt
+
+def construct_t5_prompt(text):
+    """T5-specific prompt format"""
+    return f"Extract entities: {text}"
 
 def extract_json_from_response(response_text):
     """Extract JSON from LLM response"""
@@ -499,27 +532,30 @@ if st.button("Analyze Text", type="primary"):
     else:
         with st.spinner("Processing text through NER → Geocoding → Output generation..."):
             try:
-                # Step 1: Named Entity Recognition
-                st.subheader("Step 1: Named Entity Recognition")
+                # Step 1: Named Entity Recognition using LLM prompting only
+                st.subheader("Step 1: Named Entity Recognition (LLM Prompting)")
                 model_url = MODEL_OPTIONS[selected_model]
                 
                 entities = []
                 
-                if "NER" in selected_model or "bert" in selected_model.lower():
-                    # Use dedicated NER model
-                    entities = use_dedicated_ner_model(user_input, model_url)
-                    st.success(f"✓ NER model extracted {len(entities)} entities")
+                # Use LLM prompting for all models
+                if "t5" in selected_model.lower():
+                    prompt = construct_t5_prompt(user_input)
                 else:
-                    # Use generative model with prompting
                     prompt = construct_ner_prompt(user_input)
-                    llm_response = query_llm(prompt, model_url)
-                    
-                    # Parse response
-                    entities = extract_json_from_response(llm_response)
-                    if not entities:
-                        entities = []
-                    
-                    st.success(f"✓ LLM extracted {len(entities)} entities")
+                
+                llm_response = query_llm(prompt, model_url)
+                
+                st.write("**LLM Response:**")
+                st.text(llm_response)
+                
+                # Parse response
+                entities = extract_json_from_response(llm_response)
+                if not entities:
+                    st.warning("Could not parse JSON from LLM response. Trying fallback extraction...")
+                    entities = fallback_entity_extraction(user_input)
+                
+                st.success(f"✓ Extracted {len(entities)} entities using LLM prompting")
                 
                 # Display extracted entities
                 if entities:
@@ -641,11 +677,18 @@ with st.expander("Instructions & Features"):
     4. **Structured Output**: Generates both JSON-LD and rich HTML output
     
     ### Features:
-    - **Multiple Model Options**: Choose between Qwen models, dedicated NER models, or GPT-2
+    - **LLM Prompting Only**: Uses generative language models with carefully crafted prompts
+    - **Multiple LLM Options**: GPT-2, DistilGPT-2, T5, and FLAN-T5 models
     - **Free Geocoding**: Uses Nominatim (OpenStreetMap) for location data
     - **JSON-LD Output**: Schema.org compliant structured data
     - **Rich HTML**: Interactive visualization with embedded structured data
     - **Download Options**: Get results in multiple formats
+    
+    ### Why LLM Prompting?
+    - More flexible than dedicated NER models
+    - Can adapt to different entity types through prompting
+    - Better context understanding for ambiguous entities
+    - Can be fine-tuned through prompt engineering
     
     ### JSON-LD Benefits:
     - SEO-friendly structured data
