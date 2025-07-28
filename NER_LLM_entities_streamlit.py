@@ -33,12 +33,11 @@ headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
 # Model options - ONLY generative LLMs for prompting-based NER
 MODEL_OPTIONS = {
-    "GPT-2": "https://api-inference.huggingface.co/models/gpt2",
-    "DistilGPT-2": "https://api-inference.huggingface.co/models/distilgpt2", 
     "FLAN-T5-Small": "https://api-inference.huggingface.co/models/google/flan-t5-small",
     "FLAN-T5-Base": "https://api-inference.huggingface.co/models/google/flan-t5-base",
     "T5-Small": "https://api-inference.huggingface.co/models/t5-small",
     "T5-Base": "https://api-inference.huggingface.co/models/t5-base"
+    # Optional: add more API-available models here
 }
 
 def query_llm(prompt, model_url, max_retries=3):
