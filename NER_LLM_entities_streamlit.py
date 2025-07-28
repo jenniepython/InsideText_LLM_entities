@@ -26,13 +26,21 @@ MODEL_OPTIONS = {
 }
 
 def construct_ner_prompt(text):
-    prompt = f"""Extract named entities from the following text. Return only a JSON array with objects having \"text\", \"type\", and \"start_pos\" fields.
+    excerpt = text[:300] + ("..." if len(text) > 300 else "")
+    prompt = f"""You are an expert assistant tasked with named entity recognition.
 
-Entity types: PERSON, ORGANIZATION, LOCATION, DATE, TIME, MONEY, PERCENT, MISC
+Given this excerpt from the text:
+\"{excerpt}\"
 
-Text: \"{text}\"
+Use it to identify entities in the full text below. For each entity, include its position in the full text using a field called \"start_pos\".
 
-JSON array:"""
+Return a JSON array of objects with \"text\", \"type\", and \"start_pos\" fields only.
+
+Text to analyze:
+{text}
+
+JSON array:
+"""
     return prompt
 
 def extract_json_from_response(response_text):
@@ -112,7 +120,6 @@ def create_json_ld(entities, original_text):
 
 def create_html_output(entities, text):
     text_html = text
-    # Sort by descending start_pos to safely replace text
     for ent in sorted(entities, key=lambda x: -x.get("start_pos", 0)):
         label = ent['type']
         value = ent['text']
@@ -181,4 +188,5 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+
 
