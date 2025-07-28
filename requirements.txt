@@ -7,3 +7,4 @@ requests
 streamlit-authenticator
 plotly
 pyyaml
+google-generativeai
