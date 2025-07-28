@@ -1,26 +1,3 @@
-# Test model availability
-if st.button("🔍 Test All Models"):
-    st.subheader("Testing LLM availability...")
-    working_models = []
-
-    for model_name, model_url in MODEL_OPTIONS.items():
-        with st.container():
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.write(f"**{model_name}**")
-            with col2:
-                available, message = test_model_availability(model_url)
-                if available:
-                    st.success(f"✓ {message}")
-                    working_models.append(model_name)
-                else:
-                    st.error(f"✗ {message}")
-
-    if working_models:
-        st.info(f"Working models: {', '.join(working_models)}")
-    else:
-        st.warning("No models are currently accessible. Try checking your API token.")
-
 """
 Streamlit App: Text -> NER -> Geocoding -> JSON-LD & HTML Output
 """
