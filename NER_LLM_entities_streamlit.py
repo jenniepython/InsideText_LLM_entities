@@ -33,10 +33,11 @@ headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
 # Model options - ONLY generative LLMs for prompting-based NER
 MODEL_OPTIONS = {
-    "Google Flan-T5 (Small)": {
-        "model_name": "google/flan-t5-small",
-        "description": "Text-to-text model available via API",
-        "inference_api": True
+    "Gemini 1.5 Flash": {
+        "model_name": "gemini-1.5-flash",
+        "description": "Google’s lightweight LLM for fast generation",
+        "inference_api": False,
+        "provider": "google"
     }
 }
 
@@ -55,7 +56,7 @@ def query_llm(prompt, model_url, max_retries=3):
     
     for attempt in range(max_retries):
         try:
-            response = requests.post(model_url, headers=headers, json=payload, timeout=30)
+            response = requests.post(, headers=headers, json=payload, timeout=30)
             
             if response.status_code == 503:
                 st.warning(f"Model loading... Attempt {attempt + 1}/{max_retries}")
@@ -85,14 +86,14 @@ def query_llm(prompt, model_url, max_retries=3):
     
     raise Exception("Max retries exceeded")
 
-def test_model_availability(model_url):
+def test_model_availability():
     """Test if model is available"""
     try:
         test_payload = {
             "inputs": "Test input",
             "parameters": {"max_new_tokens": 10}
         }
-        response = requests.post(model_url, headers=headers, json=test_payload, timeout=15)
+        response = requests.post(, headers=headers, json=test_payload, timeout=15)
         
         if response.status_code == 404:
             return False, "Model not found"
@@ -112,13 +113,13 @@ if st.button("🔍 Test All Models"):
     st.subheader("Testing LLM availability...")
     working_models = []
     
-    for model_name, model_url in MODEL_OPTIONS.items():
+    for model_name,  in MODEL_OPTIONS.items():
         with st.container():
             col1, col2 = st.columns([1, 2])
             with col1:
                 st.write(f"**{model_name}**")
             with col2:
-                available, message = test_model_availability(model_url)
+                available, message = test_model_availability()
                 if available:
                     st.success(f"✓ {message}")
                     working_models.append(model_name)
@@ -520,7 +521,26 @@ if st.button("Analyze Text", type="primary"):
                 # Step 1: Named Entity Recognition using LLM prompting only
                 st.subheader("Step 1: Named Entity Recognition (LLM Prompting)")
                 # model_url = MODEL_OPTIONS[selected_model]
-                model_url = f"https://api-inference.huggingface.co/models/{MODEL_OPTIONS[selected_model]['model_name']}"
+                provider = MODEL_OPTIONS[selected_model].get("provider", "huggingface")
+
+                if provider == "google":
+                    import google.generativeai as genai
+                    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+                
+                    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                
+                    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+                    prompt = construct_ner_prompt(user_input)
+                    gemini_response = gemini_model.generate_content(prompt)
+                    llm_response = gemini_response.text
+                else:
+                    model_url = f"https://api-inference.huggingface.co/models/{MODEL_OPTIONS[selected_model]['model_name']}"
+                    if "t5" in selected_model.lower():
+                        prompt = construct_t5_prompt(user_input)
+                    else:
+                        prompt = construct_ner_prompt(user_input)
+                    llm_response = query_llm(prompt, model_url)
+
                 
                 entities = []
                 
