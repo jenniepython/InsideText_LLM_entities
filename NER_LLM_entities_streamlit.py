@@ -516,57 +516,26 @@ if st.button("Analyze Text", type="primary"):
     if not user_input.strip():
         st.warning("Please enter some text to analyze.")
     else:
-        with st.spinner("Processing text through NER → Geocoding → Output generation..."):
+        with st.spinner("Processing text through Gemini → Geocoding → Output generation..."):
             try:
-                # Step 1: Named Entity Recognition using LLM prompting only
-                st.subheader("Step 1: Named Entity Recognition (LLM Prompting)")
-                # model_url = MODEL_OPTIONS[selected_model]
-                provider = MODEL_OPTIONS[selected_model].get("provider", "huggingface")
+                import google.generativeai as genai
+                genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-                if provider == "google":
-                    import google.generativeai as genai
-                    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-                
-                    from google.generativeai.types import HarmCategory, HarmBlockThreshold
-                
-                    gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-                    prompt = construct_ner_prompt(user_input)
-                    gemini_response = gemini_model.generate_content(prompt)
-                    llm_response = gemini_response.text
-                else:
-                    model_url = f"https://api-inference.huggingface.co/models/{MODEL_OPTIONS[selected_model]['model_name']}"
-                    if "t5" in selected_model.lower():
-                        prompt = construct_t5_prompt(user_input)
-                    else:
-                        prompt = construct_ner_prompt(user_input)
-                    llm_response = query_llm(prompt, model_url)
+                model = genai.GenerativeModel("gemini-1.5-flash")
+                prompt = construct_ner_prompt(user_input)
 
-                
-                entities = []
-                
-                # Use LLM prompting for all models
-                if "t5" in selected_model.lower():
-                    prompt = construct_t5_prompt(user_input)
-                else:
-                    prompt = construct_ner_prompt(user_input)
-                
-                llm_response = query_llm(prompt, model_url)
-                
-                st.write("**LLM Response:**")
+                gemini_response = model.generate_content(prompt)
+                llm_response = gemini_response.text
+
+                st.write("**Gemini Response:**")
                 st.text(llm_response)
-                
-                # Parse response
+
                 entities = extract_json_from_response(llm_response)
                 if not entities:
-                    st.warning("Could not parse JSON from LLM response. Trying fallback extraction...")
-                    entities = fallback_entity_extraction(user_input)
-                
-                st.success(f"✓ Extracted {len(entities)} entities using LLM prompting")
-                
-                # Display extracted entities
-                if entities:
-                    for entity in entities:
-                        st.write(f"**{entity['text']}** ({entity['type']})")
+                    st.warning("Could not parse JSON from Gemini response.")
+                    st.stop()
+
+                st.success(f"✓ Extracted {len(entities)} entities using Gemini")
                 
                 # Step 2: Geocoding
                 if geocode_locations and entities:
@@ -671,6 +640,7 @@ if st.button("Analyze Text", type="primary"):
                 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+            
 
 # Instructions
 with st.expander("Instructions & Features"):
