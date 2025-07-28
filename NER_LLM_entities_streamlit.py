@@ -534,7 +534,8 @@ if st.button("Analyze Text", type="primary"):
             try:
                 # Step 1: Named Entity Recognition using LLM prompting only
                 st.subheader("Step 1: Named Entity Recognition (LLM Prompting)")
-                model_url = MODEL_OPTIONS[selected_model]
+                # model_url = MODEL_OPTIONS[selected_model]
+                model_url = f"https://api-inference.huggingface.co/models/{MODEL_OPTIONS[selected_model]['model_name']}"
                 
                 entities = []
                 
