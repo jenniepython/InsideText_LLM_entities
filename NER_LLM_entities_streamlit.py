@@ -1,3 +1,90 @@
+
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
+
+st.set_page_config(
+    page_title="From Text to Linked Data using LLM",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# Custom CSS for Farrow & Ball Slipper Satin background and input theming
+st.markdown("""
+<style>
+.stApp {
+    background-color: #F5F0DC !important;
+}
+.main .block-container {
+    background-color: #F5F0DC !important;
+}
+.stSidebar {
+    background-color: #F5F0DC !important;
+}
+.stSelectbox > div > div {
+    background-color: white !important;
+}
+.stTextInput > div > div > input {
+    background-color: white !important;
+}
+.stTextArea > div > div > textarea {
+    background-color: white !important;
+}
+.stExpander {
+    background-color: white !important;
+    border: 1px solid #E0D7C0 !important;
+    border-radius: 4px !important;
+}
+.stDataFrame {
+    background-color: white !important;
+}
+.stButton > button {
+    background-color: #C4A998 !important;
+    color: black !important;
+    border: none !important;
+    border-radius: 4px !important;
+    font-weight: 500 !important;
+}
+.stButton > button:hover {
+    background-color: #B5998A !important;
+    color: black !important;
+}
+.stButton > button:active {
+    background-color: #A68977 !important;
+    color: black !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Authentication
+import os
+if not os.path.exists('config.yaml'):
+    st.error("Authentication required: config.yaml file not found!")
+    st.info("Please ensure config.yaml is in the same directory as this app.")
+    st.stop()
+
+with open('config.yaml') as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config['credentials'],
+    config['cookie']['name'],
+    config['cookie']['key'],
+    config['cookie']['expiry_days']
+)
+
+if 'authentication_status' in st.session_state and st.session_state['authentication_status']:
+    name = st.session_state['name']
+    authenticator.logout("Logout", "sidebar")
+else:
+    login_result = authenticator.login('Login', 'main')
+    if login_result is None or (isinstance(login_result, tuple) and login_result[1] != True):
+        st.warning("Please log in to use the app.")
+        st.stop()
+    elif isinstance(login_result, tuple) and login_result[1] == True:
+        st.session_state['authentication_status'] = True
+        st.session_state['name'] = login_result[0]
+
 """
 Streamlit App: Text -> NER -> Geocoding -> JSON-LD & HTML Output (Gemini Only)
 """
@@ -188,5 +275,8 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+
+
+
 
 
