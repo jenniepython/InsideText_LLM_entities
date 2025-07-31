@@ -118,37 +118,83 @@ class LLMEntityLinker:
         }
 
     def construct_ner_prompt(self, text):
-        """Construct the NER prompt for Gemini."""
-        excerpt = text[:300] + ("..." if len(text) > 300 else "")
-        prompt = f"""You are an expert assistant tasked with named entity recognition.
+        """Construct an improved NER prompt for Gemini with few-shot examples relevant to digital humanities and historical texts."""
+        
+        # Few-shot examples tailored for digital humanities and historical texts
+        examples = """
+Examples:
 
-Given this excerpt from the text:
-"{excerpt}"
+Text: "The Whitechapel Bell Foundry was established in 1570 and cast the Liberty Bell for Philadelphia. Master founder Robert Mot created bells for St. Paul's Cathedral in the 17th century."
+Output:
+[
+    {"text": "Whitechapel Bell Foundry", "type": "ORGANIZATION", "start_pos": 4},
+    {"text": "1570", "type": "DATE", "start_pos": 44},
+    {"text": "Liberty Bell", "type": "WORK_OF_ART", "start_pos": 62},
+    {"text": "Philadelphia", "type": "GPE", "start_pos": 79},
+    {"text": "Robert Mot", "type": "PERSON", "start_pos": 108},
+    {"text": "St. Paul's Cathedral", "type": "FACILITY", "start_pos": 139},
+    {"text": "17th century", "type": "DATE", "start_pos": 167}
+]
 
-Use it to identify entities in the full text below. For each entity, include its position in the full text using a field called "start_pos".
+Text: "In the manuscript British Library MS Cotton Vitellius A.xv, Beowulf battles the dragon. The codex dates to circa 1000 CE and contains Old English verse."
+Output:
+[
+    {"text": "British Library MS Cotton Vitellius A.xv", "type": "WORK_OF_ART", "start_pos": 17},
+    {"text": "Beowulf", "type": "PERSON", "start_pos": 60},
+    {"text": "circa 1000 CE", "type": "DATE", "start_pos": 108},
+    {"text": "Old English", "type": "LANGUAGE", "start_pos": 135}
+]
 
-Return a JSON array of objects with "text", "type", and "start_pos" fields only.
+Text: "The Theatre Royal Drury Lane staged Richard Sheridan's The School for Scandal in 1777. David Garrick had previously managed this playhouse from 1747 to 1776."
+Output:
+[
+    {"text": "Theatre Royal Drury Lane", "type": "FACILITY", "start_pos": 4},
+    {"text": "Richard Sheridan", "type": "PERSON", "start_pos": 36},
+    {"text": "The School for Scandal", "type": "WORK_OF_ART", "start_pos": 55},
+    {"text": "1777", "type": "DATE", "start_pos": 81},
+    {"text": "David Garrick", "type": "PERSON", "start_pos": 87},
+    {"text": "1747", "type": "DATE", "start_pos": 135},
+    {"text": "1776", "type": "DATE", "start_pos": 143}
+]
+"""
+        
+        prompt = f"""You are an expert named entity recognition system specialized in historical documents, manuscripts, and cultural heritage materials. Your task is to identify and extract ALL relevant entities from historical and literary texts.
 
-Entity types to identify:
-- PERSON: Names of people, fictional characters
-- ORGANIZATION: Companies, institutions, organizations, bands, teams
-- GPE: Geopolitical entities (countries, cities, states, regions)
-- LOCATION: Geographic locations, landmarks, natural features
-- FACILITY: Buildings, structures, venues, facilities
-- ADDRESS: Street addresses, postal addresses
-- PRODUCT: Products, brands, models, software, apps, games
-- EVENT: Named events, conferences, festivals, competitions, historical events
-- WORK_OF_ART: Books, movies, songs, artworks, TV shows, albums
-- LANGUAGE: Programming languages, spoken languages
-- LAW: Legal documents, acts, regulations, treaties
-- DATE: Specific dates, time periods, years
-- MONEY: Monetary amounts, currencies
-- QUANTITY: Measurements, percentages, numbers with units
+TASK DEFINITION:
+Extract entities with their exact positions in the text. Be thorough and identify as many relevant entities as possible, paying special attention to historical names, places, dates, and cultural artifacts.
 
-Text to analyse:
-{text}
+ENTITY TYPES TO IDENTIFY:
+- PERSON: Historical figures, authors, artists, craftsmen, performers, rulers, religious figures
+- ORGANIZATION: Historical institutions, guilds, companies, religious orders, theatrical companies
+- GPE: Historical places, cities, kingdoms, regions, counties, parishes, districts
+- LOCATION: Geographic locations, neighborhoods, historical sites, battlefields, landmarks
+- FACILITY: Historical buildings, theaters, churches, castles, bridges, workshops, stages
+- ADDRESS: Historical addresses, street names, property descriptions
+- PRODUCT: Historical artifacts, manufactured goods, instruments, tools, materials
+- EVENT: Historical events, performances, ceremonies, festivals, wars, meetings
+- WORK_OF_ART: Plays, operas, paintings, sculptures, manuscripts, books, musical compositions
+- LANGUAGE: Historical languages, dialects, scripts, linguistic terms
+- LAW: Historical laws, charters, acts, regulations, legal documents
+- DATE: Historical dates, periods, reigns, centuries, years, eras
+- MONEY: Historical currencies, amounts, prices, wages, costs
+- QUANTITY: Historical measurements, dimensions, capacities, distances, weights
 
-JSON array:
+IMPORTANT INSTRUCTIONS FOR HISTORICAL TEXTS:
+1. Extract ALL entities you can identify - be comprehensive and thorough
+2. Include historical terminology and period-specific language
+3. Capture complete historical names and titles (e.g., "Theatre Royal Drury Lane", "Master founder")
+4. Include manuscript references, architectural features, and technical terms
+5. Don't miss dates, measurements, or specialized vocabulary
+6. Pay attention to historical context and period-appropriate entities
+7. Include both major and minor historical figures, places, and events
+
+{examples}
+
+Now extract entities from this historical text:
+
+Text: "{text}"
+
+Output (JSON array only):
 """
         return prompt
 
@@ -1176,4 +1222,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
