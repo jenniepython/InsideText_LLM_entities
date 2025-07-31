@@ -1,16 +1,14 @@
 import streamlit as st
-st.set_page_config(
-    page_title="From Text to Linked Data using LLM",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
 
 import streamlit_authenticator as stauth
 import yaml
 from yaml.loader import SafeLoader
 
-
+st.set_page_config(
+    page_title="From Text to Linked Data using LLM",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
 # Custom CSS for Farrow & Ball Slipper Satin background and input theming
 st.markdown("""
@@ -80,7 +78,7 @@ if 'authentication_status' in st.session_state and st.session_state['authenticat
     name = st.session_state['name']
     authenticator.logout("Logout", "sidebar")
 else:
-    login_result = authenticator.login('Login', 'main')
+login_result = authenticator.login(location='main')
     if login_result is None or (isinstance(login_result, tuple) and login_result[1] != True):
         st.warning("Please log in to use the app.")
         st.stop()
@@ -91,7 +89,6 @@ else:
 """
 Streamlit App: Text -> NER -> Geocoding -> JSON-LD & HTML Output (Gemini Only)
 """
-import streamlit as st
 import os
 import json
 import re
@@ -101,7 +98,6 @@ from datetime import datetime
 import urllib.parse
 
 # Configure Streamlit page
-
 
 # Model options - ONLY Gemini 1.5 Flash
 MODEL_OPTIONS = {
@@ -275,5 +271,8 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+
+
+
 
 
