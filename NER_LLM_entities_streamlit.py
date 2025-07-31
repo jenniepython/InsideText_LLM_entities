@@ -1,94 +1,14 @@
-import streamlit as st
-
-import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
-
-st.set_page_config(
-    page_title="From Text to Linked Data using LLM",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
-
-# Custom CSS for Farrow & Ball Slipper Satin background and input theming
-st.markdown("""
-<style>
-.stApp {
-    background-color: #F5F0DC !important;
-}
-.main .block-container {
-    background-color: #F5F0DC !important;
-}
-.stSidebar {
-    background-color: #F5F0DC !important;
-}
-.stSelectbox > div > div {
-    background-color: white !important;
-}
-.stTextInput > div > div > input {
-    background-color: white !important;
-}
-.stTextArea > div > div > textarea {
-    background-color: white !important;
-}
-.stExpander {
-    background-color: white !important;
-    border: 1px solid #E0D7C0 !important;
-    border-radius: 4px !important;
-}
-.stDataFrame {
-    background-color: white !important;
-}
-.stButton > button {
-    background-color: #C4A998 !important;
-    color: black !important;
-    border: none !important;
-    border-radius: 4px !important;
-    font-weight: 500 !important;
-}
-.stButton > button:hover {
-    background-color: #B5998A !important;
-    color: black !important;
-}
-.stButton > button:active {
-    background-color: #A68977 !important;
-    color: black !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# Authentication
-import os
-if not os.path.exists('config.yaml'):
-    st.error("Authentication required: config.yaml file not found!")
-    st.info("Please ensure config.yaml is in the same directory as this app.")
-    st.stop()
-
-with open('config.yaml') as file:
-    config = yaml.load(file, Loader=SafeLoader)
-
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
-)
-
-if 'authentication_status' in st.session_state and st.session_state['authentication_status']:
-    name = st.session_state['name']
-    authenticator.logout("Logout", "sidebar")
-else:
-    login_result = authenticator.login(location='main')
-    if login_result is None or (isinstance(login_result, tuple) and login_result[1] != True):
-        st.warning("Please log in to use the app.")
-        st.stop()
-    elif isinstance(login_result, tuple) and login_result[1] == True:
-        st.session_state['authentication_status'] = True
-        st.session_state['name'] = login_result[0]
-
 """
 Streamlit App: Text -> NER -> Geocoding -> JSON-LD & HTML Output (Gemini Only)
 """
+import streamlit as st
+
+if 'entities' not in st.session_state:
+    st.session_state['entities'] = None
+if 'json_ld_data' not in st.session_state:
+    st.session_state['json_ld_data'] = None
+if 'html_output' not in st.session_state:
+    st.session_state['html_output'] = None
 import os
 import json
 import re
@@ -98,6 +18,10 @@ from datetime import datetime
 import urllib.parse
 
 # Configure Streamlit page
+st.set_page_config(
+    page_title="Text Analysis Pipeline: NER + Geocoding + Structured Output",
+    layout="wide"
+)
 
 # Model options - ONLY Gemini 1.5 Flash
 MODEL_OPTIONS = {
@@ -201,22 +125,91 @@ def create_json_ld(entities, original_text):
         json_ld["mentions"].append(obj)
     return json_ld
 
-def create_html_output(entities, text):
-    text_html = text
-    for ent in sorted(entities, key=lambda x: -x.get("start_pos", 0)):
-        label = ent['type']
-        value = ent['text']
-        link = ""
-        if label == "PERSON" or label == "ORGANIZATION":
-            link = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(value)}"
-        elif label == "LOCATION" and ent.get("geocoding"):
-            lat = ent['geocoding']['latitude']
-            lon = ent['geocoding']['longitude']
-            link = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=12"
-        if link:
-            escaped_value = re.escape(value)
-            replacement = f"<a href='{link}' target='_blank'>{value}</a>"
-            text_html = re.sub(escaped_value, replacement, text_html, count=1)
+    def create_highlighted_html( text: str, entities: List[Dict[str, Any]]) -> str:
+        """
+        Create HTML content with highlighted entities for display.
+        
+        Args:
+            text: Original text
+            entities: List of entity dictionaries
+            
+        Returns:
+            HTML string with highlighted entities
+        """
+        import html as html_module
+        
+        # Sort entities by start position (reverse for safe replacement)
+        sorted_entities = sorted(entities, key=lambda x: x['start'], reverse=True)
+        
+        # Start with escaped text
+        highlighted = html_module.escape(text)
+        
+        # Color scheme
+        colors = {
+            'PERSON': '#BF7B69',          # F&B Red earth        
+            'ORGANIZATION': '#9fd2cd',    # F&B Blue ground
+            'GPE': '#C4C3A2',             # F&B Cooking apple green
+            'LOCATION': '#EFCA89',        # F&B Yellow ground 
+            'FACILITY': '#C3B5AC',        # F&B Elephants breath
+            'GSP': '#C4A998',             # F&B Dead salmon
+            'ADDRESS': '#CCBEAA'          # F&B Oxford stone
+        }
+        
+        # Replace entities from end to start
+        for entity in sorted_entities:
+            # Highlight entities that have links OR coordinates
+            has_links = (entity.get('britannica_url') or 
+                         entity.get('wikidata_url') or 
+                         entity.get('wikipedia_url') or     
+                         entity.get('openstreetmap_url'))
+            has_coordinates = entity.get('latitude') is not None
+            
+            if not (has_links or has_coordinates):
+                continue
+                
+            start = entity['start']
+            end = entity['end']
+            original_entity_text = text[start:end]
+            escaped_entity_text = html_module.escape(original_entity_text)
+            color = colors.get(entity['type'], '#E7E2D2')
+            
+            # Create tooltip with entity information
+            tooltip_parts = [f"Type: {entity['type']}"]
+            if entity.get('wikidata_description'):
+                tooltip_parts.append(f"Description: {entity['wikidata_description']}")
+            if entity.get('location_name'):
+                tooltip_parts.append(f"Location: {entity['location_name']}")
+            
+            tooltip = " | ".join(tooltip_parts)
+            
+            # Create highlighted span with link (priority: Wikipedia > Wikidata > Britannica > OpenStreetMap > Coordinates only)
+            if entity.get('wikipedia_url'):
+                url = html_module.escape(entity["wikipedia_url"])
+                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
+            elif entity.get('wikidata_url'):
+                url = html_module.escape(entity["wikidata_url"])
+                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
+            elif entity.get('britannica_url'):
+                url = html_module.escape(entity["britannica_url"])
+                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
+            elif entity.get('openstreetmap_url'):
+                url = html_module.escape(entity["openstreetmap_url"])
+                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
+            else:
+                # Just highlight with coordinates (no link)
+                replacement = f'<span style="background-color: {color}; padding: 2px 4px; border-radius: 3px;" title="{tooltip}">{escaped_entity_text}</span>'
+            
+            # Calculate positions in escaped text
+            text_before_entity = html_module.escape(text[:start])
+            text_entity_escaped = html_module.escape(text[start:end])
+            
+            escaped_start = len(text_before_entity)
+            escaped_end = escaped_start + len(text_entity_escaped)
+            
+            # Replace in the escaped text
+            highlighted = highlighted[:escaped_start] + replacement + highlighted[escaped_end:]
+        
+        return highlighted
 
     html = ["<html><head><meta charset='utf-8'><title>NER Output</title></head><body>"]
     html.append("<h2>Named Entities with Links</h2><ul>")
@@ -271,6 +264,9 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+
+
+
 
 
 
