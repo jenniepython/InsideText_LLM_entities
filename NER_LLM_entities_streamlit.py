@@ -78,7 +78,7 @@ if 'authentication_status' in st.session_state and st.session_state['authenticat
     name = st.session_state['name']
     authenticator.logout("Logout", "sidebar")
 else:
-login_result = authenticator.login(location='main')
+    login_result = authenticator.login(location='main')
     if login_result is None or (isinstance(login_result, tuple) and login_result[1] != True):
         st.warning("Please log in to use the app.")
         st.stop()
