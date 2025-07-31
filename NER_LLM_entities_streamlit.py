@@ -3,6 +3,19 @@ Streamlit App: Text -> NER -> Geocoding -> JSON-LD & HTML Output (Gemini Only)
 """
 import streamlit as st
 
+
+st.set_page_config(
+    page_title="From Text to Linked Data using LLM",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
+
+# Optional Logo
+st.markdown(
+    "<h1 style='text-align: center; color: darkblue;'>🔍 From Text to Linked Data using LLM</h1>",
+    unsafe_allow_html=True
+)
+
 if 'entities' not in st.session_state:
     st.session_state['entities'] = None
 if 'json_ld_data' not in st.session_state:
@@ -18,11 +31,6 @@ from datetime import datetime
 import urllib.parse
 
 # Configure Streamlit page
-st.set_page_config(
-    page_title="Text Analysis Pipeline: NER + Geocoding + Structured Output",
-    layout="wide"
-)
-
 # Model options - ONLY Gemini 1.5 Flash
 MODEL_OPTIONS = {
     "Gemini 1.5 Flash": {
@@ -253,7 +261,7 @@ if st.button("Analyze Text"):
                             if geodata:
                                 entity["geocoding"] = geodata
                 json_ld_data = create_json_ld(entities, user_input)
-                html_output = create_html_output(entities, user_input)
+                html_output = create_highlighted_html(entities, user_input)
 
                 st.subheader("JSON-LD Output")
                 st.json(json_ld_data)
@@ -264,6 +272,9 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
+
+
+
 
 
 
