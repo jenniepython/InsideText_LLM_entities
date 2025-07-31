@@ -154,8 +154,7 @@ def create_html_output(entities, text):
         html.append(f"<li><strong>{ent['type']}</strong>: {ent['text']}</li>")
     html.append(f"</ul><h3>Annotated Text</h3><p>{annotated_text}</p>")
     html.append("</body></html>")
-    return "
-".join(html)
+    return "\n".join(html)
     for ent in sorted(entities, key=lambda x: -x.get("start_pos", 0)):
         label = ent['type']
         value = ent['text']
