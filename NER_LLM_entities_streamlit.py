@@ -1,13 +1,16 @@
 
-import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
-
 st.set_page_config(
     page_title="From Text to Linked Data using LLM",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
+
+
 
 # Custom CSS for Farrow & Ball Slipper Satin background and input theming
 st.markdown("""
@@ -98,10 +101,7 @@ from datetime import datetime
 import urllib.parse
 
 # Configure Streamlit page
-st.set_page_config(
-    page_title="Text Analysis Pipeline: NER + Geocoding + Structured Output",
-    layout="wide"
-)
+
 
 # Model options - ONLY Gemini 1.5 Flash
 MODEL_OPTIONS = {
@@ -275,6 +275,5 @@ if st.button("Analyze Text"):
 
             except Exception as e:
                 st.error(f"Analysis failed: {str(e)}")
-
 
 
