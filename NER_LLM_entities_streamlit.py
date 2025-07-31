@@ -199,17 +199,56 @@ Output (JSON array only):
         return prompt
 
     def extract_json_from_response(self, response_text):
-        """Extract JSON from LLM response."""
+        """Extract JSON from LLM response with improved parsing."""
         response_text = response_text.strip()
-        json_patterns = [r'\[.*?\]', r'\{.*?\}']
+        
+        # Debug: Show what we're trying to parse
+        st.write("**Debug - Parsing response text:**")
+        st.text(response_text[:300] + "..." if len(response_text) > 300 else response_text)
+        
+        # Try to find JSON array patterns
+        json_patterns = [
+            r'\[.*?\]',  # Array pattern
+            r'\{.*?\}'   # Object pattern
+        ]
+        
         for pattern in json_patterns:
             matches = re.findall(pattern, response_text, re.DOTALL)
             for match in matches:
                 try:
                     parsed = json.loads(match)
-                    return parsed if isinstance(parsed, list) else [parsed]
+                    if isinstance(parsed, list):
+                        st.write(f"**Debug - Successfully parsed JSON array with {len(parsed)} items**")
+                        return parsed
+                    elif isinstance(parsed, dict):
+                        st.write("**Debug - Successfully parsed JSON object, converting to array**")
+                        return [parsed]
+                except json.JSONDecodeError as e:
+                    st.write(f"**Debug - JSON parse error for match:** {str(e)}")
+                    continue
+        
+        # If no JSON found, try to extract from code blocks
+        code_block_patterns = [
+            r'```json\s*(.*?)\s*```',
+            r'```\s*(.*?)\s*```',
+            r'`(.*?)`'
+        ]
+        
+        for pattern in code_block_patterns:
+            matches = re.findall(pattern, response_text, re.DOTALL)
+            for match in matches:
+                try:
+                    parsed = json.loads(match.strip())
+                    if isinstance(parsed, list):
+                        st.write(f"**Debug - Found JSON in code block with {len(parsed)} items**")
+                        return parsed
+                    elif isinstance(parsed, dict):
+                        st.write("**Debug - Found JSON object in code block, converting to array**")
+                        return [parsed]
                 except json.JSONDecodeError:
                     continue
+        
+        st.error("**Debug - Could not find valid JSON in response**")
         return None
 
     def extract_entities(self, text: str):
@@ -223,39 +262,62 @@ Output (JSON array only):
                 st.error("GEMINI_API_KEY environment variable not found!")
                 return []
             
+            # Debug: Show what text we're actually processing
+            st.write("**Debug - Input text length:**", len(text))
+            st.write("**Debug - First 200 characters:**", repr(text[:200]))
+            
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
             prompt = self.construct_ner_prompt(text)
+            
+            # Debug: Show the prompt being sent (truncated)
+            st.write("**Debug - Prompt length:**", len(prompt))
+            with st.expander("View full prompt being sent to Gemini"):
+                st.text(prompt)
+            
             gemini_response = model.generate_content(prompt)
             llm_response = gemini_response.text
+            
+            # Debug: Show the raw response
+            st.write("**Debug - Raw LLM response:**")
+            st.text(llm_response[:500] + "..." if len(llm_response) > 500 else llm_response)
             
             entities_raw = self.extract_json_from_response(llm_response)
             if not entities_raw:
                 st.warning("Could not parse JSON from Gemini response.")
+                st.write("**Full LLM response:**")
+                st.text(llm_response)
                 return []
             
             # Convert to consistent format matching NLTK app
             entities = []
             for entity_raw in entities_raw:
                 if 'text' in entity_raw and 'type' in entity_raw:
-                    # Find actual position in text if start_pos is not reliable
-                    start_pos = entity_raw.get('start_pos', text.find(entity_raw['text']))
+                    # Find actual position in text
+                    entity_text = entity_raw['text']
+                    start_pos = text.find(entity_text)
                     if start_pos == -1:
-                        start_pos = text.find(entity_raw['text'])
+                        # Try with start_pos from LLM if provided
+                        start_pos = entity_raw.get('start_pos', 0)
                     
                     entity = {
-                        'text': entity_raw['text'],
+                        'text': entity_text,
                         'type': entity_raw['type'],
                         'start': start_pos,
-                        'end': start_pos + len(entity_raw['text'])
+                        'end': start_pos + len(entity_text)
                     }
                     entities.append(entity)
+            
+            st.write(f"**Debug - Extracted {len(entities)} entities:**")
+            for entity in entities[:10]:  # Show first 10
+                st.write(f"- {entity['text']} ({entity['type']})")
             
             return entities
             
         except Exception as e:
             st.error(f"Error in LLM entity extraction: {e}")
+            st.exception(e)
             return []
 
     def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
