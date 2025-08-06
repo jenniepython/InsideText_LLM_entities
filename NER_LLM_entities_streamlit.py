@@ -98,7 +98,7 @@ class LLMEntityLinker:
     
     def __init__(self):
         """Initialize the LLM Entity Linker."""
-        # Color scheme for different entity types in HTML output - expanded for more entity types
+        # Color scheme for different entity types in HTML output - expanded for more entity types (removed QUANTITY)
         self.colors = {
             'PERSON': '#BF7B69',          # F&B Red earth        
             'ORGANIZATION': '#9fd2cd',    # F&B Blue ground
@@ -113,8 +113,7 @@ class LLMEntityLinker:
             'LANGUAGE': '#F0EAE2',       # F&B Pointing
             'LAW': '#DDD6CE',            # F&B Elephant's breath (lighter)
             'DATE': '#E3DDD7',          # F&B Dimity
-            'MONEY': '#D6CFCA',         # F&B Joa's white
-            'QUANTITY': '#E0DDD8'       # F&B Blackened
+            'MONEY': '#D6CFCA'          # F&B Joa's white
         }
 
     def construct_ner_prompt(self, text):
@@ -177,7 +176,6 @@ ENTITY TYPES TO IDENTIFY:
 - LAW: Historical laws, charters, acts, regulations, legal documents
 - DATE: Historical dates, periods, reigns, centuries, years, eras
 - MONEY: Historical currencies, amounts, prices, wages, costs
-- QUANTITY: Historical measurements, dimensions, capacities, distances, weights
 
 IMPORTANT INSTRUCTIONS FOR HISTORICAL TEXTS:
 1. Extract ALL entities you can identify - be comprehensive and thorough
@@ -202,10 +200,6 @@ Output (JSON array only):
         """Extract JSON from LLM response with improved parsing."""
         response_text = response_text.strip()
         
-        # Debug: Show what we're trying to parse
-        st.write("**Debug - Parsing response text:**")
-        st.text(response_text[:300] + "..." if len(response_text) > 300 else response_text)
-        
         # Try to find JSON array patterns
         json_patterns = [
             r'\[.*?\]',  # Array pattern
@@ -218,13 +212,10 @@ Output (JSON array only):
                 try:
                     parsed = json.loads(match)
                     if isinstance(parsed, list):
-                        st.write(f"**Debug - Successfully parsed JSON array with {len(parsed)} items**")
                         return parsed
                     elif isinstance(parsed, dict):
-                        st.write("**Debug - Successfully parsed JSON object, converting to array**")
                         return [parsed]
-                except json.JSONDecodeError as e:
-                    st.write(f"**Debug - JSON parse error for match:** {str(e)}")
+                except json.JSONDecodeError:
                     continue
         
         # If no JSON found, try to extract from code blocks
@@ -240,15 +231,12 @@ Output (JSON array only):
                 try:
                     parsed = json.loads(match.strip())
                     if isinstance(parsed, list):
-                        st.write(f"**Debug - Found JSON in code block with {len(parsed)} items**")
                         return parsed
                     elif isinstance(parsed, dict):
-                        st.write("**Debug - Found JSON object in code block, converting to array**")
                         return [parsed]
                 except json.JSONDecodeError:
                     continue
         
-        st.error("**Debug - Could not find valid JSON in response**")
         return None
 
     def extract_entities(self, text: str):
@@ -262,32 +250,16 @@ Output (JSON array only):
                 st.error("GEMINI_API_KEY environment variable not found!")
                 return []
             
-            # Debug: Show what text we're actually processing
-            st.write("**Debug - Input text length:**", len(text))
-            st.write("**Debug - First 200 characters:**", repr(text[:200]))
-            
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
             prompt = self.construct_ner_prompt(text)
-            
-            # Debug: Show the prompt being sent (truncated)
-            st.write("**Debug - Prompt length:**", len(prompt))
-            with st.expander("View full prompt being sent to Gemini"):
-                st.text(prompt)
-            
             gemini_response = model.generate_content(prompt)
             llm_response = gemini_response.text
-            
-            # Debug: Show the raw response
-            st.write("**Debug - Raw LLM response:**")
-            st.text(llm_response[:500] + "..." if len(llm_response) > 500 else llm_response)
             
             entities_raw = self.extract_json_from_response(llm_response)
             if not entities_raw:
                 st.warning("Could not parse JSON from Gemini response.")
-                st.write("**Full LLM response:**")
-                st.text(llm_response)
                 return []
             
             # Convert to consistent format matching NLTK app
@@ -309,15 +281,10 @@ Output (JSON array only):
                     }
                     entities.append(entity)
             
-            st.write(f"**Debug - Extracted {len(entities)} entities:**")
-            for entity in entities[:10]:  # Show first 10
-                st.write(f"- {entity['text']} ({entity['type']})")
-            
             return entities
             
         except Exception as e:
             st.error(f"Error in LLM entity extraction: {e}")
-            st.exception(e)
             return []
 
     def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
@@ -977,7 +944,7 @@ class StreamlitLLMEntityLinker:
         # Start with escaped text
         highlighted = html_module.escape(text)
         
-        # Color scheme - expanded for all entity types
+        # Color scheme - expanded for all entity types (removed QUANTITY)
         colors = {
             'PERSON': '#BF7B69',          # F&B Red earth        
             'ORGANIZATION': '#9fd2cd',    # F&B Blue ground
@@ -992,8 +959,7 @@ class StreamlitLLMEntityLinker:
             'LANGUAGE': '#F0EAE2',       # F&B Pointing
             'LAW': '#DDD6CE',            # F&B Elephant's breath (lighter)
             'DATE': '#E3DDD7',          # F&B Dimity
-            'MONEY': '#D6CFCA',         # F&B Joa's white
-            'QUANTITY': '#E0DDD8'       # F&B Blackened
+            'MONEY': '#D6CFCA'          # F&B Joa's white
         }
         
         # Replace entities from end to start
@@ -1209,38 +1175,33 @@ class StreamlitLLMEntityLinker:
             )
         
         with col2:
-            # HTML export
+            # HTML export - clean version with just the text and proper links
             if st.session_state.html_content:
-                html_template = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Entity Analysis: {st.session_state.analysis_title}</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>
-                        body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }}
-                        .content {{ background: white; padding: 20px; border: 1px solid #ddd; border-radius: 5px; line-height: 1.6; }}
-                        .header {{ background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
-                        @media (max-width: 768px) {{
-                            body {{ padding: 10px; }}
-                            .content {{ padding: 15px; }}
-                            .header {{ padding: 10px; }}
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="header">
-                        <h1>Entity Analysis: {st.session_state.analysis_title}</h1>
-                        <p>Generated on {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                        <p>Found {len(entities)} entities using Gemini LLM</p>
-                    </div>
-                    <div class="content">
-                        {st.session_state.html_content}
-                    </div>
-                </body>
-                </html>
-                """
+                html_template = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Entity Analysis</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }}
+        @media (max-width: 768px) {{
+            body {{
+                padding: 10px;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    {st.session_state.html_content}
+</body>
+</html>"""
                 
                 st.download_button(
                     label="Download HTML",
