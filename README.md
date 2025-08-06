@@ -45,7 +45,7 @@ Open your browser and navigate to `http://localhost:8501`.
 
 ## Requirements
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 - Streamlit
 - Gemini API key
 
