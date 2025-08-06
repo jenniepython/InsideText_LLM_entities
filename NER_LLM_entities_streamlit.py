@@ -116,79 +116,133 @@ class LLMEntityLinker:
             'MONEY': '#D6CFCA'          # F&B Joa's white
         }
 
-    def construct_ner_prompt(self, text):
-        """Construct an improved NER prompt for Gemini with few-shot examples relevant to digital humanities and historical texts."""
+    def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
+        """Construct a context-aware NER prompt that works for any text."""
         
-        # Few-shot examples tailored for digital humanities and historical texts
+        # Analyze context if not provided
+        if context is None:
+            context = self.analyze_text_context(text)
+        
+        # Create dynamic context instructions based on detected patterns
+        context_instructions = ""
+        
+        # Add period-based instructions
+        if context.get('period') == 'ancient':
+            context_instructions += """
+ANCIENT/HISTORICAL CONTEXT DETECTED:
+- Place names in historical contexts = ancient locations (GPE), not modern companies
+- Ancient peoples (like Phoenicians, Romans, etc.) = civilizations (ORGANIZATION)
+- If people "came to", "sailed to", "traveled to" a place → that place is GPE/LOCATION
+- Names ending in -us, -os, -es often = ancient people or places
+- Kings, emperors, pharaohs = historical figures (PERSON)
+"""
+        elif context.get('period') in ['medieval', 'victorian']:
+            context_instructions += f"""
+{context.get('period').upper()} PERIOD CONTEXT DETECTED:
+- Historical building names = period facilities (FACILITY)
+- Technical/architectural terms = historical products/features (PRODUCT)
+- Period-appropriate interpretation of ambiguous names
+"""
+        
+        # Add subject matter instructions
+        if context.get('subject_matter') == 'theater':
+            context_instructions += """
+THEATER CONTEXT DETECTED:
+- Stage terminology (mezzanine, proscenium, trap, etc.) = technical features (PRODUCT)
+- Theater names = performance venues (FACILITY) 
+- Play titles = works of art (WORK_OF_ART)
+- Performers, directors = people (PERSON)
+"""
+        elif context.get('subject_matter') == 'architecture':
+            context_instructions += """
+ARCHITECTURE CONTEXT DETECTED:
+- Building components, materials = architectural products (PRODUCT)
+- Architectural styles, periods = historical context
+- Building names = facilities (FACILITY)
+"""
+        elif context.get('subject_matter') == 'literature':
+            context_instructions += """
+LITERATURE CONTEXT DETECTED:
+- Book titles, manuscript names = works of art (WORK_OF_ART)
+- Authors, poets, writers = people (PERSON)
+- Literary characters = people (PERSON) if clearly fictional
+"""
+        
+        # Add geographical context
+        if context.get('region'):
+            region_name = context['region'].replace('_', ' ').title()
+            context_instructions += f"""
+GEOGRAPHICAL CONTEXT: {region_name}
+- Interpret place names in appropriate regional/cultural context
+- Historical places should link to period-appropriate entries
+"""
+        
+        # Dynamic examples based on detected context
         examples = """
 Examples:
 
-Text: "The Whitechapel Bell Foundry was established in 1570 and cast the Liberty Bell for Philadelphia. Master founder Robert Mot created bells for St. Paul's Cathedral in the 17th century."
+Text: "The merchants sailed from their homeland to the great city, bringing goods to trade with the local rulers."
+Context: Historical/ancient context detected
 Output:
 [
-    {"text": "Whitechapel Bell Foundry", "type": "ORGANIZATION", "start_pos": 4},
-    {"text": "1570", "type": "DATE", "start_pos": 44},
-    {"text": "Liberty Bell", "type": "WORK_OF_ART", "start_pos": 62},
-    {"text": "Philadelphia", "type": "GPE", "start_pos": 79},
-    {"text": "Robert Mot", "type": "PERSON", "start_pos": 108},
-    {"text": "St. Paul's Cathedral", "type": "FACILITY", "start_pos": 139},
-    {"text": "17th century", "type": "DATE", "start_pos": 167}
+    {"text": "merchants", "type": "PERSON", "start_pos": 4},
+    {"text": "homeland", "type": "LOCATION", "start_pos": 27},
+    {"text": "great city", "type": "GPE", "start_pos": 44},
+    {"text": "rulers", "type": "PERSON", "start_pos": 97}
 ]
 
-Text: "In the manuscript British Library MS Cotton Vitellius A.xv, Beowulf battles the dragon. The codex dates to circa 1000 CE and contains Old English verse."
+Text: "The theater's main stage featured a revolving platform and hydraulic lifts for scene changes."
+Context: Theater context detected
 Output:
 [
-    {"text": "British Library MS Cotton Vitellius A.xv", "type": "WORK_OF_ART", "start_pos": 17},
-    {"text": "Beowulf", "type": "PERSON", "start_pos": 60},
-    {"text": "circa 1000 CE", "type": "DATE", "start_pos": 108},
-    {"text": "Old English", "type": "LANGUAGE", "start_pos": 135}
+    {"text": "theater", "type": "FACILITY", "start_pos": 4},
+    {"text": "main stage", "type": "PRODUCT", "start_pos": 14},
+    {"text": "revolving platform", "type": "PRODUCT", "start_pos": 35},
+    {"text": "hydraulic lifts", "type": "PRODUCT", "start_pos": 58}
 ]
 
-Text: "The Theatre Royal Drury Lane staged Richard Sheridan's The School for Scandal in 1777. David Garrick had previously managed this playhouse from 1747 to 1776."
+Text: "The manuscript contains poems written by the court poet during the reign of King Edward."
+Context: Literature/historical context detected
 Output:
 [
-    {"text": "Theatre Royal Drury Lane", "type": "FACILITY", "start_pos": 4},
-    {"text": "Richard Sheridan", "type": "PERSON", "start_pos": 36},
-    {"text": "The School for Scandal", "type": "WORK_OF_ART", "start_pos": 55},
-    {"text": "1777", "type": "DATE", "start_pos": 81},
-    {"text": "David Garrick", "type": "PERSON", "start_pos": 87},
-    {"text": "1747", "type": "DATE", "start_pos": 135},
-    {"text": "1776", "type": "DATE", "start_pos": 143}
+    {"text": "manuscript", "type": "WORK_OF_ART", "start_pos": 4},
+    {"text": "poems", "type": "WORK_OF_ART", "start_pos": 24},
+    {"text": "court poet", "type": "PERSON", "start_pos": 45},
+    {"text": "King Edward", "type": "PERSON", "start_pos": 75}
 ]
 """
         
-        prompt = f"""You are an expert named entity recognition system specialized in historical documents, manuscripts, and cultural heritage materials. Your task is to identify and extract ALL relevant entities from historical and literary texts.
+        prompt = f"""You are an expert named entity recognition system that adapts to different text types and contexts. Your task is to identify and extract ALL relevant entities while interpreting them correctly based on context.
 
-TASK DEFINITION:
-Extract entities with their exact positions in the text. Be thorough and identify as many relevant entities as possible, paying special attention to historical names, places, dates, and cultural artifacts.
+{context_instructions}
 
-ENTITY TYPES TO IDENTIFY:
-- PERSON: Historical figures, authors, artists, craftsmen, performers, rulers, religious figures
-- ORGANIZATION: Historical institutions, guilds, companies, religious orders, theatrical companies
-- GPE: Historical places, cities, kingdoms, regions, counties, parishes, districts
-- LOCATION: Geographic locations, neighborhoods, historical sites, battlefields, landmarks
-- FACILITY: Historical buildings, theaters, churches, castles, bridges, workshops, stages
-- ADDRESS: Historical addresses, street names, property descriptions
-- PRODUCT: Historical artifacts, manufactured goods, instruments, tools, materials
-- EVENT: Historical events, performances, ceremonies, festivals, wars, meetings
-- WORK_OF_ART: Plays, operas, paintings, sculptures, manuscripts, books, musical compositions
-- LANGUAGE: Historical languages, dialects, scripts, linguistic terms
-- LAW: Historical laws, charters, acts, regulations, legal documents
-- DATE: Historical dates, periods, reigns, centuries, years, eras
-- MONEY: Historical currencies, amounts, prices, wages, costs
+CORE CONTEXTUAL RULES (apply to ANY text):
+1. If people "went to", "came to", "sailed to", "traveled to" a place → that place is GPE/LOCATION
+2. In historical contexts, interpret names as historical entities, not modern companies
+3. Technical terms related to the subject matter = PRODUCT (tools, components, features)
+4. Titles of creative works = WORK_OF_ART
+5. Names of buildings, venues, institutions = FACILITY
+6. Groups of people, civilizations, organizations = ORGANIZATION
+7. Individual people, historical figures, characters = PERSON
 
-IMPORTANT INSTRUCTIONS FOR HISTORICAL TEXTS:
-1. Extract ALL entities you can identify - be comprehensive and thorough
-2. Include historical terminology and period-specific language
-3. Capture complete historical names and titles (e.g., "Theatre Royal Drury Lane", "Master founder")
-4. Include manuscript references, architectural features, and technical terms
-5. Don't miss dates, measurements, or specialized vocabulary
-6. Pay attention to historical context and period-appropriate entities
-7. Include both major and minor historical figures, places, and events
+ENTITY TYPES:
+- PERSON: People, historical figures, characters, roles, titles
+- ORGANIZATION: Groups, institutions, civilizations, companies, teams
+- GPE: Cities, countries, regions, kingdoms, territories, political entities  
+- LOCATION: Geographic places, landmarks, natural features
+- FACILITY: Buildings, venues, structures, stages, theaters
+- ADDRESS: Street addresses, property descriptions
+- PRODUCT: Objects, tools, components, materials, technical features
+- EVENT: Named events, ceremonies, performances, battles
+- WORK_OF_ART: Books, plays, poems, manuscripts, artworks
+- LANGUAGE: Languages, dialects, scripts
+- LAW: Legal documents, laws, regulations
+- DATE: Dates, periods, years, eras, reigns
+- MONEY: Currencies, amounts, prices
 
 {examples}
 
-Now extract entities from this historical text:
+Now extract entities from this text, using context clues to determine correct interpretations:
 
 Text: "{text}"
 
@@ -240,7 +294,7 @@ Output (JSON array only):
         return None
 
     def extract_entities(self, text: str):
-        """Extract named entities from text using Gemini LLM."""
+        """Extract named entities from text using Gemini LLM with context awareness."""
         try:
             import google.generativeai as genai
             
@@ -250,10 +304,14 @@ Output (JSON array only):
                 st.error("GEMINI_API_KEY environment variable not found!")
                 return []
             
+            # First, analyze the text context
+            context = self.analyze_text_context(text)
+            
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
-            prompt = self.construct_ner_prompt(text)
+            # Use context-aware prompt
+            prompt = self.construct_ner_prompt(text, context)
             gemini_response = model.generate_content(prompt)
             llm_response = gemini_response.text
             
@@ -290,7 +348,8 @@ Output (JSON array only):
                         'text': entity_text,
                         'type': entity_type,
                         'start': start_pos,
-                        'end': start_pos + len(entity_text)
+                        'end': start_pos + len(entity_text),
+                        'context': context  # Store context for linking
                     }
                     entities.append(entity)
             
@@ -301,69 +360,72 @@ Output (JSON array only):
             return []
 
     def analyze_text_context(self, text: str) -> Dict[str, Any]:
-        """Analyze text to determine historical, geographical, and cultural context."""
+        """Analyze text to determine historical, geographical, and cultural context - works for any text."""
         context = {
             'period': None,
             'region': None,
             'culture': None,
             'subject_matter': None,
-            'language_style': 'modern'
+            'language_style': 'modern',
+            'time_indicators': [],
+            'place_indicators': [],
+            'subject_indicators': []
         }
         
         text_lower = text.lower()
         
-        # Detect historical periods
-        period_indicators = {
-            'ancient': ['ancient', 'bc', 'bce', 'antiquity', 'classical', 'pharaoh', 'caesar', 'emperor', 'temple', 'oracle'],
-            'medieval': ['medieval', 'middle ages', 'feudal', 'knight', 'monastery', 'crusade', 'pilgrim', 'manuscript'],
-            'renaissance': ['renaissance', '15th century', '16th century', 'leonardo', 'michelangelo', 'medici'],
-            'early_modern': ['17th century', '18th century', 'enlightenment', 'baroque', 'reformation'],
-            'victorian': ['victorian', '19th century', 'industrial revolution', 'steam', 'railway', 'empire'],
-            'modern': ['20th century', '21st century', 'world war', 'internet', 'digital']
-        }
+        # Detect time periods - broader patterns
+        if any(indicator in text_lower for indicator in ['bc', 'bce', 'ancient', 'antiquity', 'classical', 'pharaoh', 'emperor', 'temple', 'oracle', 'sailed', 'came to', 'kingdom']):
+            context['period'] = 'ancient'
+            context['time_indicators'].extend(['ancient', 'classical', 'historical'])
+        elif any(indicator in text_lower for indicator in ['medieval', 'middle ages', 'feudal', 'knight', 'monastery', 'manuscript', 'abbey', 'monk']):
+            context['period'] = 'medieval'
+            context['time_indicators'].extend(['medieval', 'historical'])
+        elif any(indicator in text_lower for indicator in ['victorian', '19th century', 'industrial', 'railway', 'steam', 'empire', 'theatre royal']):
+            context['period'] = 'victorian'
+            context['time_indicators'].extend(['victorian', '19th century'])
+        elif any(indicator in text_lower for indicator in ['20th century', '21st century', 'modern', 'contemporary', 'digital', 'internet']):
+            context['period'] = 'modern'
         
-        for period, indicators in period_indicators.items():
-            if any(indicator in text_lower for indicator in indicators):
-                context['period'] = period
-                break
+        # Detect geographical context - broader patterns
+        # European context
+        if any(indicator in text_lower for indicator in ['europe', 'european', 'britain', 'france', 'germany', 'italy', 'spain']):
+            context['region'] = 'european'
+        # Ancient Mediterranean
+        elif any(indicator in text_lower for indicator in ['mediterranean', 'greece', 'greek', 'rome', 'roman', 'egypt', 'phoenician']):
+            context['region'] = 'mediterranean'
+            if any(indicator in text_lower for indicator in ['greece', 'greek', 'hellas', 'athens', 'sparta']):
+                context['culture'] = 'greek'
+            elif any(indicator in text_lower for indicator in ['rome', 'roman', 'latin', 'caesar']):
+                context['culture'] = 'roman'
+        # Asian context
+        elif any(indicator in text_lower for indicator in ['asia', 'china', 'japan', 'india', 'persia', 'persian']):
+            context['region'] = 'asian'
         
-        # Detect geographical/cultural regions
-        region_indicators = {
-            'ancient_greece': ['greece', 'greek', 'athens', 'sparta', 'delphi', 'olympia', 'hellas', 'argos', 'thebes', 'corinth', 'phoenician'],
-            'ancient_rome': ['rome', 'roman', 'latin', 'caesar', 'senate', 'consul', 'legion', 'colosseum'],
-            'ancient_egypt': ['egypt', 'egyptian', 'pharaoh', 'nile', 'pyramid', 'hieroglyph', 'alexandria'],
-            'ancient_persia': ['persia', 'persian', 'zoroaster', 'cyrus', 'darius'],
-            'mesopotamia': ['babylon', 'assyria', 'mesopotamia', 'tigris', 'euphrates'],
-            'britain': ['britain', 'british', 'england', 'london', 'scotland', 'wales', 'uk'],
-            'france': ['france', 'french', 'paris', 'versailles'],
-            'germany': ['germany', 'german', 'berlin', 'bavaria'],
-            'italy': ['italy', 'italian', 'florence', 'venice', 'milan', 'naples']
-        }
+        # Detect subject matter - broader patterns
+        if any(indicator in text_lower for indicator in ['theatre', 'theater', 'stage', 'play', 'drama', 'performance', 'actor', 'audience', 'curtain']):
+            context['subject_matter'] = 'theater'
+            context['subject_indicators'].extend(['theater', 'performance', 'drama'])
+        elif any(indicator in text_lower for indicator in ['building', 'architecture', 'cathedral', 'church', 'castle', 'palace', 'construction']):
+            context['subject_matter'] = 'architecture'
+            context['subject_indicators'].extend(['architecture', 'building'])
+        elif any(indicator in text_lower for indicator in ['book', 'manuscript', 'text', 'author', 'writing', 'literature', 'poem', 'novel']):
+            context['subject_matter'] = 'literature'
+            context['subject_indicators'].extend(['literature', 'writing'])
+        elif any(indicator in text_lower for indicator in ['battle', 'war', 'army', 'soldier', 'military', 'conflict', 'victory']):
+            context['subject_matter'] = 'military'
+            context['subject_indicators'].extend(['military', 'war', 'battle'])
+        elif any(indicator in text_lower for indicator in ['king', 'queen', 'royal', 'court', 'politics', 'government', 'ruler']):
+            context['subject_matter'] = 'politics'
+            context['subject_indicators'].extend(['politics', 'royal', 'government'])
         
-        for region, indicators in region_indicators.items():
-            if any(indicator in text_lower for indicator in indicators):
-                context['region'] = region
-                break
-        
-        # Detect subject matter
-        subject_indicators = {
-            'theater': ['theatre', 'theater', 'stage', 'play', 'drama', 'actor', 'performance', 'audience'],
-            'architecture': ['building', 'architecture', 'cathedral', 'church', 'castle', 'palace'],
-            'literature': ['book', 'manuscript', 'author', 'poem', 'novel', 'text', 'writing'],
-            'history': ['battle', 'war', 'king', 'queen', 'empire', 'dynasty', 'reign'],
-            'mythology': ['myth', 'legend', 'god', 'goddess', 'hero', 'oracle', 'prophecy']
-        }
-        
-        for subject, indicators in subject_indicators.items():
-            if any(indicator in text_lower for indicator in indicators):
-                context['subject_matter'] = subject
-                break
-        
-        # Detect language style
-        if any(word in text_lower for word in ['thee', 'thou', 'thy', 'hath', 'doth', 'forsooth']):
+        # Detect language style patterns
+        if any(pattern in text_lower for pattern in ['thee', 'thou', 'thy', 'hath', 'doth', 'forsooth', 'wherefore']):
             context['language_style'] = 'archaic'
-        elif any(word in text_lower for word in ['learned men say', 'it is said', 'according to']):
+        elif any(pattern in text_lower for pattern in ['it is said', 'according to', 'the learned men', 'historians say']):
             context['language_style'] = 'historical_narrative'
+        elif any(pattern in text_lower for pattern in ['recording', 'survey', 'analysis', 'study', 'research']):
+            context['language_style'] = 'academic'
         
         return context
         """
@@ -675,49 +737,67 @@ Output (JSON array only):
         return context_clues[:3]
 
     def link_to_wikipedia_contextual(self, entities, text_context):
-        """Add contextual Wikipedia linking based on text analysis."""
+        """Add contextual Wikipedia linking that works for any text type."""
         for entity in entities:
             # Skip if already has Wikidata link
             if entity.get('wikidata_url'):
                 continue
                 
             try:
-                # Create context-aware search terms
+                # Get entity context from extraction
+                entity_context = entity.get('context', text_context)
+                
+                # Create context-aware search terms - generalized approach
                 search_terms = [entity['text']]
                 
-                # Add contextual modifiers based on text analysis
-                if text_context['region'] == 'ancient_greece' and entity['type'] in ['GPE', 'LOCATION']:
-                    search_terms.extend([
-                        f"{entity['text']} ancient Greece",
-                        f"{entity['text']} ancient Greek city",
-                        f"ancient {entity['text']}"
-                    ])
-                elif text_context['region'] == 'ancient_rome' and entity['type'] in ['GPE', 'LOCATION']:
-                    search_terms.extend([
-                        f"{entity['text']} ancient Rome",
-                        f"{entity['text']} Roman",
-                        f"ancient {entity['text']}"
-                    ])
-                elif text_context['period'] == 'ancient' and entity['type'] == 'PERSON':
-                    search_terms.extend([
-                        f"{entity['text']} ancient",
-                        f"{entity['text']} mythology",
-                        f"{entity['text']} classical"
-                    ])
-                elif text_context['period'] == 'victorian' and entity['type'] in ['FACILITY', 'ORGANIZATION']:
-                    search_terms.extend([
-                        f"{entity['text']} Victorian",
-                        f"{entity['text']} 19th century"
-                    ])
-                elif text_context['subject_matter'] == 'theater' and entity['type'] in ['FACILITY', 'PERSON']:
+                # Add context based on detected patterns, not hardcoded regions
+                context_modifiers = []
+                
+                # Add period context
+                if entity_context.get('time_indicators'):
+                    context_modifiers.extend(entity_context['time_indicators'])
+                
+                # Add subject matter context
+                if entity_context.get('subject_indicators'):
+                    context_modifiers.extend(entity_context['subject_indicators'])
+                
+                # Add place context
+                if entity_context.get('place_indicators'):
+                    context_modifiers.extend(entity_context['place_indicators'])
+                
+                # Add general historical context if period is detected
+                if entity_context.get('period') and entity_context['period'] != 'modern':
+                    context_modifiers.extend(['historical', entity_context['period']])
+                
+                # Create contextual search terms for different entity types
+                if entity['type'] in ['GPE', 'LOCATION'] and context_modifiers:
+                    for modifier in context_modifiers[:3]:  # Top 3 modifiers
+                        search_terms.append(f"{entity['text']} {modifier}")
+                        if modifier != 'historical':  # Avoid double historical
+                            search_terms.append(f"{modifier} {entity['text']}")
+                
+                elif entity['type'] == 'PERSON' and context_modifiers:
+                    for modifier in context_modifiers[:3]:
+                        search_terms.append(f"{entity['text']} {modifier}")
+                        # Add biographical terms
+                        if entity_context.get('period') and entity_context['period'] != 'modern':
+                            search_terms.append(f"{entity['text']} biography")
+                
+                elif entity['type'] == 'ORGANIZATION' and context_modifiers:
+                    for modifier in context_modifiers[:2]:
+                        search_terms.append(f"{entity['text']} {modifier}")
+                
+                elif entity['type'] in ['FACILITY', 'PRODUCT'] and 'theater' in context_modifiers:
                     search_terms.extend([
                         f"{entity['text']} theatre",
-                        f"{entity['text']} theater",
-                        f"{entity['text']} drama"
+                        f"{entity['text']} theater architecture"
                     ])
                 
-                # Try each search term
-                for search_term in search_terms[:3]:  # Limit to top 3
+                # Remove duplicates and limit search terms
+                search_terms = list(dict.fromkeys(search_terms))[:4]
+                
+                # Try each contextual search term
+                for search_term in search_terms:
                     search_url = "https://en.wikipedia.org/w/api.php"
                     search_params = {
                         'action': 'query',
@@ -736,19 +816,57 @@ Output (JSON array only):
                             result = data['query']['search'][0]
                             page_title = result['title']
                             
-                            # Create Wikipedia URL
+                            # Basic validation - check if result seems relevant
+                            snippet = result.get('snippet', '').lower()
+                            title_lower = page_title.lower()
+                            
+                            # Skip clearly irrelevant results
+                            skip_terms = ['video game', 'software', 'app', 'company', 'corporation', 'brand']
+                            if entity_context.get('period') and entity_context['period'] != 'modern':
+                                if any(term in snippet or term in title_lower for term in skip_terms):
+                                    continue  # Try next search term
+                            
+                            # Accept result if it seems reasonable
                             encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
                             entity['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{encoded_title}"
                             entity['wikipedia_title'] = page_title
                             
                             # Get a snippet/description from the search result
                             if result.get('snippet'):
-                                snippet = re.sub(r'<[^>]+>', '', result['snippet'])
-                                entity['wikipedia_description'] = snippet[:200] + "..." if len(snippet) > 200 else snippet
+                                snippet_clean = re.sub(r'<[^>]+>', '', result['snippet'])
+                                entity['wikipedia_description'] = snippet_clean[:200] + "..." if len(snippet_clean) > 200 else snippet_clean
                             
                             # Mark which search term worked
                             entity['search_context'] = search_term
                             break
+                    
+                    time.sleep(0.2)  # Rate limiting
+                
+            except Exception as e:
+                pass
+        
+        return entities', 'classical', 'antiquity']):
+                                    valid_result = True
+                            elif entity_context.get('subject_matter') == 'theater':
+                                if any(word in snippet or word in title_lower for word in ['theatre', 'theater', 'stage', 'drama']):
+                                    valid_result = True
+                            else:
+                                valid_result = True  # Default to valid for other contexts
+                            
+                            if valid_result:
+                                # Create Wikipedia URL
+                                encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
+                                entity['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{encoded_title}"
+                                entity['wikipedia_title'] = page_title
+                                
+                                # Get a snippet/description from the search result
+                                if result.get('snippet'):
+                                    snippet_clean = re.sub(r'<[^>]+>', '', result['snippet'])
+                                    entity['wikipedia_description'] = snippet_clean[:200] + "..." if len(snippet_clean) > 200 else snippet_clean
+                                
+                                # Mark which search term worked
+                                entity['search_context'] = search_term
+                                break
                     
                     time.sleep(0.2)  # Rate limiting
                 
@@ -1483,3 +1601,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
