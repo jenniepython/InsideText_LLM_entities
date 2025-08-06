@@ -603,16 +603,52 @@ Output (JSON array only):
         return False
 
     def link_to_wikidata(self, entities):
-        """Add basic Wikidata linking."""
+        """Add context-aware Wikidata linking."""
         for entity in entities:
             try:
+                # Get context from entity if available
+                entity_context = entity.get('context', {})
+                
+                # Prepare search query with context
+                search_query = entity['text']
+                
+                # Add context to search for better disambiguation
+                if entity['type'] == 'GPE':
+                    # For places, add geographical context
+                    if entity_context.get('period') == 'ancient':
+                        search_query = f"{entity['text']} ancient city"
+                    elif entity_context.get('region') == 'mediterranean':
+                        search_query = f"{entity['text']} Greece"
+                    
+                    # Special cases for known ancient places
+                    if entity['text'].lower() == 'argos':
+                        search_query = "Argos Greece ancient city"
+                    elif entity['text'].lower() == 'hellas':
+                        search_query = "ancient Greece Hellas"
+                
+                elif entity['type'] == 'PERSON':
+                    # For people in ancient contexts, add mythology/history context
+                    if entity_context.get('period') == 'ancient':
+                        if entity['text'].lower() == 'io':
+                            search_query = "Io mythology"
+                        elif entity['text'].lower() == 'inachus':
+                            search_query = "Inachus mythology river god"
+                        else:
+                            search_query = f"{entity['text']} ancient history"
+                
+                elif entity['type'] == 'LOCATION':
+                    # For locations like "Red Sea", search more specifically
+                    if 'sea' in entity['text'].lower():
+                        search_query = f"{entity['text']} body of water"
+                
+                # Search Wikidata with enhanced query
                 url = "https://www.wikidata.org/w/api.php"
                 params = {
                     'action': 'wbsearchentities',
                     'format': 'json',
-                    'search': entity['text'],
+                    'search': search_query,
                     'language': 'en',
-                    'limit': 1,
+                    'limit': 5,  # Get more results to choose from
                     'type': 'item'
                 }
                 
@@ -620,9 +656,57 @@ Output (JSON array only):
                 if response.status_code == 200:
                     data = response.json()
                     if data.get('search') and len(data['search']) > 0:
-                        result = data['search'][0]
-                        entity['wikidata_url'] = f"http://www.wikidata.org/entity/{result['id']}"
-                        entity['wikidata_description'] = result.get('description', '')
+                        # Try to find the best match based on context
+                        best_match = None
+                        
+                        for result in data['search']:
+                            description = result.get('description', '').lower()
+                            label = result.get('label', '').lower()
+                            
+                            # Score each result based on context relevance
+                            if entity['type'] == 'GPE':
+                                # Prefer geographical entities
+                                if any(term in description for term in ['city', 'town', 'ancient', 'greece', 'greek', 'historical', 'archaeological', 'country', 'region']):
+                                    # Skip if it's clearly wrong (like video games)
+                                    if not any(skip in description for skip in ['video game', 'game', 'software', 'album', 'film', 'movie', 'book']):
+                                        best_match = result
+                                        break
+                            
+                            elif entity['type'] == 'PERSON':
+                                # Prefer mythological/historical figures for ancient texts
+                                if entity_context.get('period') == 'ancient':
+                                    if any(term in description for term in ['mythology', 'mythological', 'ancient', 'greek', 'deity', 'god', 'goddess', 'hero', 'king', 'queen']):
+                                        best_match = result
+                                        break
+                                # Otherwise just avoid obvious non-persons
+                                elif not any(skip in description for skip in ['genus', 'species', 'asteroid', 'crater', 'company']):
+                                    best_match = result
+                                    break
+                            
+                            elif entity['type'] == 'LOCATION':
+                                # Prefer geographical features
+                                if any(term in description for term in ['sea', 'ocean', 'river', 'mountain', 'lake', 'water', 'geographic']):
+                                    best_match = result
+                                    break
+                            
+                            elif entity['type'] == 'ORGANIZATION':
+                                # Prefer historical/ethnic groups
+                                if any(term in description for term in ['people', 'ethnic', 'ancient', 'historical', 'civilization']):
+                                    best_match = result
+                                    break
+                        
+                        # Use best match or fall back to first result
+                        if best_match:
+                            entity['wikidata_url'] = f"http://www.wikidata.org/entity/{best_match['id']}"
+                            entity['wikidata_description'] = best_match.get('description', '')
+                        else:
+                            # If no good match found, use first result but mark it as uncertain
+                            result = data['search'][0]
+                            entity['wikidata_url'] = f"http://www.wikidata.org/entity/{result['id']}"
+                            entity['wikidata_description'] = result.get('description', '')
+                            # Add warning if description seems wrong
+                            if entity['type'] == 'GPE' and any(term in result.get('description', '').lower() for term in ['game', 'software', 'album']):
+                                entity['wikidata_description'] = f"[May be incorrect] {result.get('description', '')}"
                 
                 time.sleep(0.1)  # Rate limiting
             except Exception:
