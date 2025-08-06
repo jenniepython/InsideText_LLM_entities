@@ -262,12 +262,25 @@ Output (JSON array only):
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
-            # Convert to consistent format matching NLTK app
+            # Convert to consistent format and remove duplicates
             entities = []
+            seen_entities = set()  # Track (text, type) pairs to avoid duplicates
+            
             for entity_raw in entities_raw:
                 if 'text' in entity_raw and 'type' in entity_raw:
+                    entity_text = entity_raw['text'].strip()
+                    entity_type = entity_raw['type']
+                    
+                    # Create unique key for duplicate detection
+                    unique_key = (entity_text.lower(), entity_type)
+                    
+                    # Skip if we've already seen this entity
+                    if unique_key in seen_entities:
+                        continue
+                    
+                    seen_entities.add(unique_key)
+                    
                     # Find actual position in text
-                    entity_text = entity_raw['text']
                     start_pos = text.find(entity_text)
                     if start_pos == -1:
                         # Try with start_pos from LLM if provided
@@ -275,7 +288,7 @@ Output (JSON array only):
                     
                     entity = {
                         'text': entity_text,
-                        'type': entity_raw['type'],
+                        'type': entity_type,
                         'start': start_pos,
                         'end': start_pos + len(entity_text)
                     }
@@ -287,7 +300,72 @@ Output (JSON array only):
             st.error(f"Error in LLM entity extraction: {e}")
             return []
 
-    def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
+    def analyze_text_context(self, text: str) -> Dict[str, Any]:
+        """Analyze text to determine historical, geographical, and cultural context."""
+        context = {
+            'period': None,
+            'region': None,
+            'culture': None,
+            'subject_matter': None,
+            'language_style': 'modern'
+        }
+        
+        text_lower = text.lower()
+        
+        # Detect historical periods
+        period_indicators = {
+            'ancient': ['ancient', 'bc', 'bce', 'antiquity', 'classical', 'pharaoh', 'caesar', 'emperor', 'temple', 'oracle'],
+            'medieval': ['medieval', 'middle ages', 'feudal', 'knight', 'monastery', 'crusade', 'pilgrim', 'manuscript'],
+            'renaissance': ['renaissance', '15th century', '16th century', 'leonardo', 'michelangelo', 'medici'],
+            'early_modern': ['17th century', '18th century', 'enlightenment', 'baroque', 'reformation'],
+            'victorian': ['victorian', '19th century', 'industrial revolution', 'steam', 'railway', 'empire'],
+            'modern': ['20th century', '21st century', 'world war', 'internet', 'digital']
+        }
+        
+        for period, indicators in period_indicators.items():
+            if any(indicator in text_lower for indicator in indicators):
+                context['period'] = period
+                break
+        
+        # Detect geographical/cultural regions
+        region_indicators = {
+            'ancient_greece': ['greece', 'greek', 'athens', 'sparta', 'delphi', 'olympia', 'hellas', 'argos', 'thebes', 'corinth', 'phoenician'],
+            'ancient_rome': ['rome', 'roman', 'latin', 'caesar', 'senate', 'consul', 'legion', 'colosseum'],
+            'ancient_egypt': ['egypt', 'egyptian', 'pharaoh', 'nile', 'pyramid', 'hieroglyph', 'alexandria'],
+            'ancient_persia': ['persia', 'persian', 'zoroaster', 'cyrus', 'darius'],
+            'mesopotamia': ['babylon', 'assyria', 'mesopotamia', 'tigris', 'euphrates'],
+            'britain': ['britain', 'british', 'england', 'london', 'scotland', 'wales', 'uk'],
+            'france': ['france', 'french', 'paris', 'versailles'],
+            'germany': ['germany', 'german', 'berlin', 'bavaria'],
+            'italy': ['italy', 'italian', 'florence', 'venice', 'milan', 'naples']
+        }
+        
+        for region, indicators in region_indicators.items():
+            if any(indicator in text_lower for indicator in indicators):
+                context['region'] = region
+                break
+        
+        # Detect subject matter
+        subject_indicators = {
+            'theater': ['theatre', 'theater', 'stage', 'play', 'drama', 'actor', 'performance', 'audience'],
+            'architecture': ['building', 'architecture', 'cathedral', 'church', 'castle', 'palace'],
+            'literature': ['book', 'manuscript', 'author', 'poem', 'novel', 'text', 'writing'],
+            'history': ['battle', 'war', 'king', 'queen', 'empire', 'dynasty', 'reign'],
+            'mythology': ['myth', 'legend', 'god', 'goddess', 'hero', 'oracle', 'prophecy']
+        }
+        
+        for subject, indicators in subject_indicators.items():
+            if any(indicator in text_lower for indicator in indicators):
+                context['subject_matter'] = subject
+                break
+        
+        # Detect language style
+        if any(word in text_lower for word in ['thee', 'thou', 'thy', 'hath', 'doth', 'forsooth']):
+            context['language_style'] = 'archaic'
+        elif any(word in text_lower for word in ['learned men say', 'it is said', 'according to']):
+            context['language_style'] = 'historical_narrative'
+        
+        return context
         """
         Detect geographical context from the text to improve geocoding accuracy.
         Dynamic approach without hardcoded mappings.
@@ -536,7 +614,148 @@ Output (JSON array only):
         
         return entities
 
-    def link_to_wikipedia(self, entities):
+    def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
+        """
+        Detect geographical context from the text to improve geocoding accuracy.
+        Dynamic approach without hardcoded mappings.
+        """
+        context_clues = []
+        text_lower = text.lower()
+        
+        # Extract from entities that are already identified as places
+        geographical_entities = []
+        for entity in entities:
+            if entity['type'] in ['GPE', 'LOCATION', 'FACILITY']:
+                geographical_entities.append(entity['text'].lower())
+        
+        # Look for common geographical indicators in the text
+        # Countries - common ones that appear frequently
+        common_countries = ['uk', 'united kingdom', 'britain', 'great britain', 'england', 'scotland', 'wales', 'northern ireland',
+                           'usa', 'united states', 'america', 'us', 'canada', 'australia', 'france', 'germany', 'italy', 
+                           'spain', 'japan', 'china', 'india', 'brazil', 'russia', 'mexico', 'netherlands', 'belgium', 
+                           'switzerland', 'austria', 'sweden', 'norway', 'denmark', 'poland', 'portugal', 'greece',
+                           'ireland', 'finland', 'czech republic', 'hungary', 'romania', 'bulgaria', 'croatia',
+                           'south africa', 'egypt', 'israel', 'turkey', 'iran', 'iraq', 'saudi arabia', 'uae',
+                           'thailand', 'vietnam', 'malaysia', 'singapore', 'indonesia', 'philippines', 'south korea',
+                           'north korea', 'taiwan', 'hong kong', 'new zealand', 'argentina', 'chile', 'colombia',
+                           'peru', 'venezuela', 'ecuador', 'bolivia', 'uruguay', 'paraguay']
+        
+        # Major cities - extract dynamically from entities and common patterns
+        for country in common_countries:
+            if country in text_lower:
+                context_clues.append(country)
+        
+        # Add geographical entities found by the LLM
+        for geo_entity in geographical_entities:
+            if geo_entity not in context_clues:
+                context_clues.append(geo_entity)
+        
+        # Look for postal codes to infer country
+        postal_patterns = {
+            'uk': [
+                r'\b[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\b',  # UK postcodes
+                r'\b[A-Z]{2}\d{1,2}\s*\d[A-Z]{2}\b'
+            ],
+            'usa': [
+                r'\b\d{5}(-\d{4})?\b'  # US ZIP codes
+            ],
+            'canada': [
+                r'\b[A-Z]\d[A-Z]\s*\d[A-Z]\d\b'  # Canadian postal codes
+            ]
+        }
+        
+        for country, patterns in postal_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, text):
+                    if country not in context_clues:
+                        context_clues.append(country)
+                    break
+        
+        # Return the most relevant context clues (limit to avoid over-constraining)
+        return context_clues[:3]
+
+    def link_to_wikipedia_contextual(self, entities, text_context):
+        """Add contextual Wikipedia linking based on text analysis."""
+        for entity in entities:
+            # Skip if already has Wikidata link
+            if entity.get('wikidata_url'):
+                continue
+                
+            try:
+                # Create context-aware search terms
+                search_terms = [entity['text']]
+                
+                # Add contextual modifiers based on text analysis
+                if text_context['region'] == 'ancient_greece' and entity['type'] in ['GPE', 'LOCATION']:
+                    search_terms.extend([
+                        f"{entity['text']} ancient Greece",
+                        f"{entity['text']} ancient Greek city",
+                        f"ancient {entity['text']}"
+                    ])
+                elif text_context['region'] == 'ancient_rome' and entity['type'] in ['GPE', 'LOCATION']:
+                    search_terms.extend([
+                        f"{entity['text']} ancient Rome",
+                        f"{entity['text']} Roman",
+                        f"ancient {entity['text']}"
+                    ])
+                elif text_context['period'] == 'ancient' and entity['type'] == 'PERSON':
+                    search_terms.extend([
+                        f"{entity['text']} ancient",
+                        f"{entity['text']} mythology",
+                        f"{entity['text']} classical"
+                    ])
+                elif text_context['period'] == 'victorian' and entity['type'] in ['FACILITY', 'ORGANIZATION']:
+                    search_terms.extend([
+                        f"{entity['text']} Victorian",
+                        f"{entity['text']} 19th century"
+                    ])
+                elif text_context['subject_matter'] == 'theater' and entity['type'] in ['FACILITY', 'PERSON']:
+                    search_terms.extend([
+                        f"{entity['text']} theatre",
+                        f"{entity['text']} theater",
+                        f"{entity['text']} drama"
+                    ])
+                
+                # Try each search term
+                for search_term in search_terms[:3]:  # Limit to top 3
+                    search_url = "https://en.wikipedia.org/w/api.php"
+                    search_params = {
+                        'action': 'query',
+                        'format': 'json',
+                        'list': 'search',
+                        'srsearch': search_term,
+                        'srlimit': 1
+                    }
+                    
+                    headers = {'User-Agent': 'EntityLinker/1.0'}
+                    response = requests.get(search_url, params=search_params, headers=headers, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('query', {}).get('search'):
+                            result = data['query']['search'][0]
+                            page_title = result['title']
+                            
+                            # Create Wikipedia URL
+                            encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
+                            entity['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{encoded_title}"
+                            entity['wikipedia_title'] = page_title
+                            
+                            # Get a snippet/description from the search result
+                            if result.get('snippet'):
+                                snippet = re.sub(r'<[^>]+>', '', result['snippet'])
+                                entity['wikipedia_description'] = snippet[:200] + "..." if len(snippet) > 200 else snippet
+                            
+                            # Mark which search term worked
+                            entity['search_context'] = search_term
+                            break
+                    
+                    time.sleep(0.2)  # Rate limiting
+                
+            except Exception as e:
+                pass
+        
+        return entities
         """Add Wikipedia linking for entities without Wikidata links."""
         for entity in entities:
             # Skip if already has Wikidata link
@@ -828,7 +1047,7 @@ class StreamlitLLMEntityLinker:
 
     def process_text(self, text: str, title: str):
         """
-        Process the input text using the LLM EntityLinker.
+        Process the input text using the LLM EntityLinker with contextual analysis.
         
         Args:
             text: Input text to process
@@ -851,7 +1070,12 @@ class StreamlitLLMEntityLinker:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Step 1: Extract entities using LLM (cached)
+                # Step 1: Analyze text context for better linking
+                status_text.text("Analyzing text context...")
+                progress_bar.progress(10)
+                text_context = self.entity_linker.analyze_text_context(text)
+                
+                # Step 2: Extract entities using LLM (cached)
                 status_text.text("Extracting entities using Gemini LLM...")
                 progress_bar.progress(25)
                 entities_json = self.cached_extract_entities(text)
@@ -861,28 +1085,26 @@ class StreamlitLLMEntityLinker:
                     st.warning("No entities found in the text.")
                     return
                 
-                # Step 2: Link to Wikidata (cached)
+                # Step 3: Link to Wikidata (cached)
                 status_text.text("Linking to Wikidata...")
                 progress_bar.progress(50)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_wikidata(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 3: Link to Wikipedia (cached)
-                status_text.text("Linking to Wikipedia...")
+                # Step 4: Contextual Wikipedia linking
+                status_text.text("Linking to Wikipedia with context...")
                 progress_bar.progress(60)
-                entities_json = json.dumps(entities, default=str)
-                linked_entities_json = self.cached_link_to_wikipedia(entities_json)
-                entities = json.loads(linked_entities_json)
+                entities = self.entity_linker.link_to_wikipedia_contextual(entities, text_context)
                 
-                # Step 4: Link to Britannica (cached)
+                # Step 5: Link to Britannica (cached)
                 status_text.text("Linking to Britannica...")
                 progress_bar.progress(70)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_britannica(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 5: Get coordinates
+                # Step 6: Get coordinates
                 status_text.text("Getting coordinates...")
                 progress_bar.progress(85)
                 # Geocode all place entities more aggressively
@@ -906,12 +1128,12 @@ class StreamlitLLMEntityLinker:
                         st.warning(f"Some geocoding failed: {e}")
                         # Continue with processing even if geocoding fails
                 
-                # Step 6: Link addresses to OpenStreetMap
+                # Step 7: Link addresses to OpenStreetMap
                 status_text.text("Linking addresses to OpenStreetMap...")
                 progress_bar.progress(90)
                 entities = self.entity_linker.link_to_openstreetmap(entities)
                 
-                # Step 7: Generate visualization
+                # Step 8: Generate visualization
                 status_text.text("Generating visualization...")
                 progress_bar.progress(100)
                 html_content = self.create_highlighted_html(text, entities)
@@ -922,12 +1144,26 @@ class StreamlitLLMEntityLinker:
                 st.session_state.html_content = html_content
                 st.session_state.analysis_title = title
                 st.session_state.last_processed_hash = text_hash
+                st.session_state.text_context = text_context  # Store context for reference
                 
                 # Clear progress indicators
                 progress_bar.empty()
                 status_text.empty()
                 
-                st.success(f"Processing complete! Found {len(entities)} entities.")
+                # Show context analysis results
+                if text_context['period'] or text_context['region'] or text_context['subject_matter']:
+                    st.success(f"Processing complete! Found {len(entities)} entities.")
+                    context_info = []
+                    if text_context['period']:
+                        context_info.append(f"Period: {text_context['period'].replace('_', ' ').title()}")
+                    if text_context['region']:
+                        context_info.append(f"Region: {text_context['region'].replace('_', ' ').title()}")
+                    if text_context['subject_matter']:
+                        context_info.append(f"Subject: {text_context['subject_matter'].title()}")
+                    
+                    st.info(f"Context detected: {' | '.join(context_info)}")
+                else:
+                    st.success(f"Processing complete! Found {len(entities)} entities.")
                 
             except Exception as e:
                 st.error(f"Error processing text: {e}")
