@@ -119,9 +119,9 @@ class LLMEntityLinker:
     def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
         """Construct a context-aware NER prompt that works for any text."""
         
-        # Analyze context if not provided
+        # analyse context if not provided
         if context is None:
-            context = self.analyze_text_context(text)
+            context = self.analyse_text_context(text)
         
         # Create dynamic context instructions based on detected patterns
         context_instructions = ""
@@ -316,8 +316,8 @@ Output (JSON array only):
                 st.error("GEMINI_API_KEY environment variable not found!")
                 return []
             
-            # First, analyze the text context
-            context = self.analyze_text_context(text)
+            # First, analyse the text context
+            context = self.analyse_text_context(text)
             
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
@@ -371,8 +371,8 @@ Output (JSON array only):
             st.error(f"Error in LLM entity extraction: {e}")
             return []
 
-    def analyze_text_context(self, text: str) -> Dict[str, Any]:
-        """Analyze text to determine historical, geographical, and cultural context - works for any text."""
+    def analyse_text_context(self, text: str) -> Dict[str, Any]:
+        """Analyse text to determine historical, geographical, and cultural context - works for any text."""
         context = {
             'period': None,
             'region': None,
@@ -464,9 +464,6 @@ Output (JSON array only):
                 # Fall back to OpenStreetMap
                 if self._try_openstreetmap(entity):
                     continue
-                    
-                # If still no coordinates, try a more aggressive search
-                self._try_aggressive_geocoding(entity)
         
         return entities
 
@@ -557,48 +554,6 @@ Output (JSON array only):
             time.sleep(0.3)  # Rate limiting
         except Exception as e:
             pass
-        
-        return False
-
-    def _try_aggressive_geocoding(self, entity):
-        """Try more aggressive geocoding with different search terms."""
-        # Try variations of the entity name
-        search_variations = [
-            entity['text'],
-            f"{entity['text']}, UK",
-            f"{entity['text']}, England",
-            f"{entity['text']}, Scotland",
-            f"{entity['text']}, Wales",
-            f"{entity['text']} city",
-            f"{entity['text']} town"
-        ]
-        
-        for search_term in search_variations:
-            try:
-                url = "https://nominatim.openstreetmap.org/search"
-                params = {
-                    'q': search_term,
-                    'format': 'json',
-                    'limit': 1,
-                    'addressdetails': 1
-                }
-                headers = {'User-Agent': 'EntityLinker/1.0'}
-            
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        result = data[0]
-                        entity['latitude'] = float(result['lat'])
-                        entity['longitude'] = float(result['lon'])
-                        entity['location_name'] = result['display_name']
-                        entity['geocoding_source'] = f'openstreetmap_aggressive'
-                        entity['search_term_used'] = search_term
-                        return True
-            
-                time.sleep(0.2)  # Rate limiting between attempts
-            except Exception:
-                continue
         
         return False
 
@@ -1184,7 +1139,7 @@ class StreamlitLLMEntityLinker:
             title: Analysis title
         """
         if not text.strip():
-            st.warning("Please enter some text to analyze.")
+            st.warning("Please enter some text to analyse.")
             return
         
         # Check if we've already processed this exact text
@@ -1200,10 +1155,10 @@ class StreamlitLLMEntityLinker:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Step 1: Analyze text context for better linking
+                # Step 1: analyse text context for better linking
                 status_text.text("Analyzing text context...")
                 progress_bar.progress(10)
-                text_context = self.entity_linker.analyze_text_context(text)
+                text_context = self.entity_linker.analyse_text_context(text)
                 
                 # Step 2: Extract entities using LLM (cached)
                 status_text.text("Extracting entities using Gemini LLM...")
@@ -1263,8 +1218,8 @@ class StreamlitLLMEntityLinker:
                 progress_bar.progress(90)
                 entities = self.entity_linker.link_to_openstreetmap(entities)
                 
-                # Step 8: Generate visualization
-                status_text.text("Generating visualization...")
+                # Step 8: Generate visualisation
+                status_text.text("Generating visualisation...")
                 progress_bar.progress(100)
                 html_content = self.create_highlighted_html(text, entities)
                 
@@ -1404,7 +1359,7 @@ class StreamlitLLMEntityLinker:
         return ''.join(result)
 
     def render_results(self):
-        """Render the results section with entities and visualizations - same as NLTK app."""
+        """Render the results section with entities and visualisations - same as NLTK app."""
         if not st.session_state.entities:
             st.info("Enter some text above and click 'Process Text' to see results.")
             return
@@ -1613,7 +1568,7 @@ class StreamlitLLMEntityLinker:
             if text_input.strip():
                 self.process_text(text_input, analysis_title)
             else:
-                st.warning("Please enter some text to analyze.")
+                st.warning("Please enter some text to analyse.")
         
         # Add some spacing
         st.markdown("---")
