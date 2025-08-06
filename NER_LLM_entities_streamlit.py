@@ -845,35 +845,8 @@ Output (JSON array only):
             except Exception as e:
                 pass
         
-        return entities', 'classical', 'antiquity']):
-                                    valid_result = True
-                            elif entity_context.get('subject_matter') == 'theater':
-                                if any(word in snippet or word in title_lower for word in ['theatre', 'theater', 'stage', 'drama']):
-                                    valid_result = True
-                            else:
-                                valid_result = True  # Default to valid for other contexts
-                            
-                            if valid_result:
-                                # Create Wikipedia URL
-                                encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
-                                entity['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{encoded_title}"
-                                entity['wikipedia_title'] = page_title
-                                
-                                # Get a snippet/description from the search result
-                                if result.get('snippet'):
-                                    snippet_clean = re.sub(r'<[^>]+>', '', result['snippet'])
-                                    entity['wikipedia_description'] = snippet_clean[:200] + "..." if len(snippet_clean) > 200 else snippet_clean
-                                
-                                # Mark which search term worked
-                                entity['search_context'] = search_term
-                                break
-                    
-                    time.sleep(0.2)  # Rate limiting
-                
-            except Exception as e:
-                pass
-        
         return entities
+        
         """Add Wikipedia linking for entities without Wikidata links."""
         for entity in entities:
             # Skip if already has Wikidata link
