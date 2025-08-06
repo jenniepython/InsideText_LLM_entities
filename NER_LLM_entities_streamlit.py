@@ -1260,92 +1260,77 @@ class StreamlitLLMEntityLinker:
                 st.error(f"Error processing text: {e}")
                 st.exception(e)
 
-    def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
-        """
-        Create HTML content with highlighted entities for display.
-        Fixed to ensure proper HTML link syntax.
-        """
-        # Sort entities by start position (reverse for safe replacement)
-        sorted_entities = sorted(entities, key=lambda x: x['start'], reverse=True)
-        
-        # Start with escaped text
-        highlighted = html_module.escape(text)
-        
-        # Color scheme - expanded for all entity types (removed QUANTITY)
-        colors = {
-            'PERSON': '#BF7B69',          # F&B Red earth        
-            'ORGANIZATION': '#9fd2cd',    # F&B Blue ground
-            'GPE': '#C4C3A2',             # F&B Cooking apple green
-            'LOCATION': '#EFCA89',        # F&B Yellow ground 
-            'FACILITY': '#C3B5AC',        # F&B Elephants breath
-            'GSP': '#C4A998',             # F&B Dead salmon
-            'ADDRESS': '#CCBEAA',         # F&B Oxford stone
-            'PRODUCT': '#E6D7C9',         # F&B Skimming stone
-            'EVENT': '#D4C5B9',          # F&B Mouse's back
-            'WORK_OF_ART': '#E8E1D4',    # F&B Strong white
-            'LANGUAGE': '#F0EAE2',       # F&B Pointing
-            'LAW': '#DDD6CE',            # F&B Elephant's breath (lighter)
-            'DATE': '#E3DDD7',          # F&B Dimity
-            'MONEY': '#D6CFCA'          # F&B Joa's white
-        }
-        
-        # Replace entities from end to start to avoid position shifting
-        for entity in sorted_entities:
-            # Only highlight entities that have links OR coordinates
-            has_links = (entity.get('britannica_url') or 
-                         entity.get('wikidata_url') or 
-                         entity.get('wikipedia_url') or     
-                         entity.get('openstreetmap_url'))
-            has_coordinates = entity.get('latitude') is not None
-            
-            if not (has_links or has_coordinates):
-                continue
-                
-            start = entity['start']
-            end = entity['end']
-            
-            # Get the original text of the entity from the source text
-            original_entity_text = text[start:end]
-            # Escape it for HTML
-            escaped_entity_text = html_module.escape(original_entity_text)
-            color = colors.get(entity['type'], '#E7E2D2')
-            
-            # Create tooltip with entity information
-            tooltip_parts = [f"Type: {entity['type']}"]
-            if entity.get('wikidata_description'):
-                tooltip_parts.append(f"Description: {entity['wikidata_description']}")
-            if entity.get('location_name'):
-                tooltip_parts.append(f"Location: {entity['location_name']}")
-            
-            tooltip = html_module.escape(" | ".join(tooltip_parts))
-            
-            # Create the replacement HTML with proper link syntax
-            # Priority: Wikipedia > Wikidata > Britannica > OpenStreetMap > Coordinates only
-            if entity.get('wikipedia_url'):
-                url = html_module.escape(entity["wikipedia_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            elif entity.get('wikidata_url'):
-                url = html_module.escape(entity["wikidata_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            elif entity.get('britannica_url'):
-                url = html_module.escape(entity["britannica_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            elif entity.get('openstreetmap_url'):
-                url = html_module.escape(entity["openstreetmap_url"])
-                replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
-            else:
-                # Just highlight with coordinates (no link)
-                replacement = f'<span style="background-color: {color}; padding: 2px 4px; border-radius: 3px;" title="{tooltip}">{escaped_entity_text}</span>'
-            
-            # Find and replace the entity text in the HTML
-            # We need to find the escaped version of the entity text
-            escaped_original = html_module.escape(original_entity_text)
-            
-            # Replace only the first occurrence to avoid issues with duplicate entities
-            if escaped_original in highlighted:
-                highlighted = highlighted.replace(escaped_original, replacement, 1)
-        
-        return highlighted
+def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
+    """
+    Create HTML content with highlighted entities for display.
+    Ensures proper HTML link syntax by replacing based on exact positions.
+    """
+    # Sort entities by start position (reverse order to avoid shifting positions)
+    sorted_entities = sorted(entities, key=lambda x: x['start'], reverse=True)
+
+    # Escape the entire text first
+    highlighted = html_module.escape(text)
+
+    colors = {
+        'PERSON': '#BF7B69',
+        'ORGANIZATION': '#9fd2cd',
+        'GPE': '#C4C3A2',
+        'LOCATION': '#EFCA89',
+        'FACILITY': '#C3B5AC',
+        'GSP': '#C4A998',
+        'ADDRESS': '#CCBEAA',
+        'PRODUCT': '#E6D7C9',
+        'EVENT': '#D4C5B9',
+        'WORK_OF_ART': '#E8E1D4',
+        'LANGUAGE': '#F0EAE2',
+        'LAW': '#DDD6CE',
+        'DATE': '#E3DDD7',
+        'MONEY': '#D6CFCA'
+    }
+
+    for entity in sorted_entities:
+        has_links = (entity.get('britannica_url') or 
+                     entity.get('wikidata_url') or 
+                     entity.get('wikipedia_url') or     
+                     entity.get('openstreetmap_url'))
+        has_coordinates = entity.get('latitude') is not None
+
+        if not (has_links or has_coordinates):
+            continue
+
+        start = entity['start']
+        end = entity['end']
+
+        # Escape the original entity text
+        escaped_entity_text = html_module.escape(text[start:end])
+        color = colors.get(entity['type'], '#E7E2D2')
+
+        tooltip_parts = [f"Type: {entity['type']}"]
+        if entity.get('wikidata_description'):
+            tooltip_parts.append(f"Description: {entity['wikidata_description']}")
+        if entity.get('location_name'):
+            tooltip_parts.append(f"Location: {entity['location_name']}")
+
+        tooltip = html_module.escape(" | ".join(tooltip_parts))
+
+        url = (entity.get('wikipedia_url') or
+               entity.get('wikidata_url') or
+               entity.get('britannica_url') or
+               entity.get('openstreetmap_url'))
+
+        if url:
+            url = html_module.escape(url)
+            replacement = (f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; '
+                           f'border-radius: 3px; text-decoration: none; color: black;" '
+                           f'target="_blank" title="{tooltip}">{escaped_entity_text}</a>')
+        else:
+            replacement = (f'<span style="background-color: {color}; padding: 2px 4px; '
+                           f'border-radius: 3px;" title="{tooltip}">{escaped_entity_text}</span>')
+
+        # Insert replacement by slicing positions accurately
+        highlighted = (highlighted[:start] + replacement + highlighted[end:])
+
+    return highlighted
 
     def render_results(self):
         """Render the results section with entities and visualizations - same as NLTK app."""
