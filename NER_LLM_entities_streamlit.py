@@ -224,27 +224,39 @@ CORE CONTEXTUAL RULES (apply to ANY text):
 5. Names of buildings, venues, institutions = FACILITY
 6. Groups of people, civilizations, organizations = ORGANIZATION
 7. Individual people, historical figures, characters = PERSON
+8. IMPORTANT: Adjectives and demonyms (Egyptian, Persian, Greek, Roman, etc.) when used as modifiers (e.g., "Egyptian merchandise", "Persian learned men") should NOT be tagged as entities. Only tag them when they refer to the people as a group (e.g., "The Egyptians built pyramids")
+9. Only extract proper nouns and named entities, not common descriptive adjectives
 
 ENTITY TYPES:
-- PERSON: People, historical figures, characters, roles, titles
-- ORGANIZATION: Groups, institutions, civilizations, companies, teams
-- GPE: Cities, countries, regions, kingdoms, territories, political entities  
-- LOCATION: Geographic places, landmarks, natural features
+- PERSON: Individual people, historical figures, characters, roles with names (e.g., "Io", "Inachus", NOT "daughter" or "king" without names)
+- ORGANIZATION: Named groups, institutions, civilizations, companies, teams (e.g., "Phoenicians" as a people, NOT "Egyptian" as an adjective)
+- GPE: Cities, countries, regions, kingdoms, territories, political entities (e.g., "Egypt", "Argos", "Hellas")
+- LOCATION: Geographic places, landmarks, natural features (e.g., "Red Sea", specific named locations)
 - FACILITY: Buildings, venues, structures, stages, theaters
 - ADDRESS: Street addresses, property descriptions
-- PRODUCT: Objects, tools, components, materials, technical features
+- PRODUCT: Objects, tools, components, materials, technical features (NOT "merchandise" or "cargo" unless specifically named)
 - EVENT: Named events, ceremonies, performances, battles
 - WORK_OF_ART: Books, plays, poems, manuscripts, artworks
 - LANGUAGE: Languages, dialects, scripts
 - LAW: Legal documents, laws, regulations
-- DATE: Dates, periods, years, eras, reigns
+- DATE: Specific dates, periods, years, eras, reigns
 - MONEY: Currencies, amounts, prices
+
+CRITICAL RULES FOR HISTORICAL TEXTS:
+- "Phoenicians", "Persians", "Greeks", "Egyptians" = ORGANIZATION only when referring to the people as a group
+- "Egyptian merchandise", "Persian learned men", "Greek ships" = DO NOT tag the adjectives
+- Place names like "Egypt", "Persia", "Greece", "Argos" = GPE
+- Named individuals like "Io", "Inachus" = PERSON
+- Unnamed roles like "the king", "the daughter" without names = DO NOT tag
+- "Red Sea" or similar named bodies of water = LOCATION
 
 {examples}
 
 Now extract entities from this text, using context clues to determine correct interpretations:
 
 Text: "{text}"
+
+Remember: Only extract clear named entities. Avoid tagging adjectives, demonyms when used as modifiers, or generic terms.
 
 Output (JSON array only):
 """
@@ -1206,14 +1218,8 @@ class StreamlitLLMEntityLinker:
     def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
         """
         Create HTML content with highlighted entities for display.
-        Ensures proper HTML link syntax by replacing based on exact positions.
+        Uses a character-by-character replacement approach to avoid position shifting.
         """
-        # Sort entities by start position (reverse order to avoid shifting positions)
-        sorted_entities = sorted(entities, key=lambda x: x['start'], reverse=True)
-
-        # Escape the entire text first
-        highlighted = html_module.escape(text)
-
         colors = {
             'PERSON': '#BF7B69',
             'ORGANIZATION': '#9fd2cd',
@@ -1230,50 +1236,88 @@ class StreamlitLLMEntityLinker:
             'DATE': '#E3DDD7',
             'MONEY': '#D6CFCA'
         }
-
-        for entity in sorted_entities:
+        
+        # Create a list to track which characters belong to which entity
+        char_entity_map = [None] * len(text)
+        
+        # Map each character position to its entity (if any)
+        for entity in entities:
             has_links = (entity.get('britannica_url') or 
-                         entity.get('wikidata_url') or 
-                         entity.get('wikipedia_url') or     
-                         entity.get('openstreetmap_url'))
+                        entity.get('wikidata_url') or 
+                        entity.get('wikipedia_url') or     
+                        entity.get('openstreetmap_url'))
             has_coordinates = entity.get('latitude') is not None
-
+            
             if not (has_links or has_coordinates):
                 continue
-
-            start = entity['start']
-            end = entity['end']
-
-            # Escape the original entity text
-            escaped_entity_text = html_module.escape(text[start:end])
-            color = colors.get(entity['type'], '#E7E2D2')
-
-            tooltip_parts = [f"Type: {entity['type']}"]
-            if entity.get('wikidata_description'):
-                tooltip_parts.append(f"Description: {entity['wikidata_description']}")
-            if entity.get('location_name'):
-                tooltip_parts.append(f"Location: {entity['location_name']}")
-
-            tooltip = html_module.escape(" | ".join(tooltip_parts))
-
-            url = (entity.get('wikipedia_url') or
-                   entity.get('wikidata_url') or
-                   entity.get('britannica_url') or
-                   entity.get('openstreetmap_url'))
-
-            if url:
-                url = html_module.escape(url)
-                replacement = (f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; '
-                               f'border-radius: 3px; text-decoration: none; color: black;" '
-                               f'target="_blank" title="{tooltip}">{escaped_entity_text}</a>')
+                
+            start = entity.get('start', -1)
+            end = entity.get('end', -1)
+            
+            # Skip if positions are invalid
+            if start < 0 or end > len(text) or start >= end:
+                continue
+                
+            # Mark characters as belonging to this entity
+            for i in range(start, min(end, len(text))):
+                if char_entity_map[i] is None:  # Don't overwrite existing entities
+                    char_entity_map[i] = entity
+        
+        # Build the HTML output
+        result = []
+        i = 0
+        while i < len(text):
+            if char_entity_map[i] is not None:
+                # Start of an entity
+                entity = char_entity_map[i]
+                entity_start = i
+                
+                # Find the end of this entity
+                while i < len(text) and char_entity_map[i] == entity:
+                    i += 1
+                entity_end = i
+                
+                # Extract the entity text
+                entity_text = text[entity_start:entity_end]
+                escaped_text = html_module.escape(entity_text)
+                
+                # Build the link/span
+                color = colors.get(entity['type'], '#E7E2D2')
+                
+                tooltip_parts = [f"Type: {entity['type']}"]
+                if entity.get('wikidata_description'):
+                    desc = entity['wikidata_description'][:100]  # Limit description length
+                    tooltip_parts.append(f"Description: {desc}")
+                if entity.get('location_name'):
+                    loc = entity['location_name'][:100]  # Limit location length
+                    tooltip_parts.append(f"Location: {loc}")
+                
+                tooltip = html_module.escape(" | ".join(tooltip_parts))
+                
+                url = (entity.get('wikipedia_url') or
+                      entity.get('wikidata_url') or
+                      entity.get('britannica_url') or
+                      entity.get('openstreetmap_url'))
+                
+                if url:
+                    # Ensure URL is properly escaped
+                    url = html_module.escape(url)
+                    result.append(
+                        f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; '
+                        f'border-radius: 3px; text-decoration: none; color: black;" '
+                        f'target="_blank" title="{tooltip}">{escaped_text}</a>'
+                    )
+                else:
+                    result.append(
+                        f'<span style="background-color: {color}; padding: 2px 4px; '
+                        f'border-radius: 3px;" title="{tooltip}">{escaped_text}</span>'
+                    )
             else:
-                replacement = (f'<span style="background-color: {color}; padding: 2px 4px; '
-                               f'border-radius: 3px;" title="{tooltip}">{escaped_entity_text}</span>')
-
-            # Insert replacement by slicing positions accurately
-            highlighted = (highlighted[:start] + replacement + highlighted[end:])
-
-        return highlighted
+                # Regular text - escape HTML characters
+                result.append(html_module.escape(text[i]))
+                i += 1
+        
+        return ''.join(result)
 
     def render_results(self):
         """Render the results section with entities and visualizations - same as NLTK app."""
