@@ -1551,5 +1551,13 @@ def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> 
         self.render_results()
 
 
-app = StreamlitLLMEntityLinker()
-app.run()
+
+
+def main():
+    """Main function to run the Streamlit application."""
+    app = StreamlitLLMEntityLinker()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
