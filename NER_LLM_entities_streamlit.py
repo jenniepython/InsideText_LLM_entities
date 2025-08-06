@@ -936,7 +936,7 @@ class StreamlitLLMEntityLinker:
     def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
         """
         Create HTML content with highlighted entities for display.
-        Same implementation as NLTK app.
+        Fixed to ensure proper HTML link syntax.
         """
         # Sort entities by start position (reverse for safe replacement)
         sorted_entities = sorted(entities, key=lambda x: x['start'], reverse=True)
@@ -962,9 +962,9 @@ class StreamlitLLMEntityLinker:
             'MONEY': '#D6CFCA'          # F&B Joa's white
         }
         
-        # Replace entities from end to start
+        # Replace entities from end to start to avoid position shifting
         for entity in sorted_entities:
-            # Highlight entities that have links OR coordinates
+            # Only highlight entities that have links OR coordinates
             has_links = (entity.get('britannica_url') or 
                          entity.get('wikidata_url') or 
                          entity.get('wikipedia_url') or     
@@ -976,7 +976,10 @@ class StreamlitLLMEntityLinker:
                 
             start = entity['start']
             end = entity['end']
+            
+            # Get the original text of the entity from the source text
             original_entity_text = text[start:end]
+            # Escape it for HTML
             escaped_entity_text = html_module.escape(original_entity_text)
             color = colors.get(entity['type'], '#E7E2D2')
             
@@ -987,9 +990,10 @@ class StreamlitLLMEntityLinker:
             if entity.get('location_name'):
                 tooltip_parts.append(f"Location: {entity['location_name']}")
             
-            tooltip = " | ".join(tooltip_parts)
+            tooltip = html_module.escape(" | ".join(tooltip_parts))
             
-            # Create highlighted span with link (priority: Wikipedia > Wikidata > Britannica > OpenStreetMap > Coordinates only)
+            # Create the replacement HTML with proper link syntax
+            # Priority: Wikipedia > Wikidata > Britannica > OpenStreetMap > Coordinates only
             if entity.get('wikipedia_url'):
                 url = html_module.escape(entity["wikipedia_url"])
                 replacement = f'<a href="{url}" style="background-color: {color}; padding: 2px 4px; border-radius: 3px; text-decoration: none; color: black;" target="_blank" title="{tooltip}">{escaped_entity_text}</a>'
@@ -1006,15 +1010,13 @@ class StreamlitLLMEntityLinker:
                 # Just highlight with coordinates (no link)
                 replacement = f'<span style="background-color: {color}; padding: 2px 4px; border-radius: 3px;" title="{tooltip}">{escaped_entity_text}</span>'
             
-            # Calculate positions in escaped text
-            text_before_entity = html_module.escape(text[:start])
-            text_entity_escaped = html_module.escape(text[start:end])
+            # Find and replace the entity text in the HTML
+            # We need to find the escaped version of the entity text
+            escaped_original = html_module.escape(original_entity_text)
             
-            escaped_start = len(text_before_entity)
-            escaped_end = escaped_start + len(text_entity_escaped)
-            
-            # Replace in the escaped text
-            highlighted = highlighted[:escaped_start] + replacement + highlighted[escaped_end:]
+            # Replace only the first occurrence to avoid issues with duplicate entities
+            if escaped_original in highlighted:
+                highlighted = highlighted.replace(escaped_original, replacement, 1)
         
         return highlighted
 
