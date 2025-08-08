@@ -710,12 +710,12 @@ Brief reasoning: Why this choice fits the historical context?
         return entities
 
     def get_coordinates(self, entities, processed_text=""):
-        """Enhanced coordinate lookup with geographical context detection."""
-        # Detect geographical context from the full text
-        context_clues = self._detect_geographical_context(processed_text, entities)
+        """Enhanced coordinate lookup with LLM-powered geographical context detection."""
+        # Use LLM to detect geographical context from the full text
+        geographical_context = self._llm_detect_geographical_context(processed_text, entities)
         
-        if context_clues:
-            print(f"Detected geographical context: {', '.join(context_clues)}")
+        if geographical_context:
+            print(f"LLM detected geographical context: {geographical_context}")
         
         place_types = ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION', 'ADDRESS']
         
@@ -725,15 +725,161 @@ Brief reasoning: Why this choice fits the historical context?
                 if entity.get('latitude') is not None:
                     continue
                 
-                # Try geocoding with context
+                # Try LLM-enhanced contextual geocoding first
+                if self._try_llm_contextual_geocoding(entity, geographical_context, processed_text):
+                    continue
+                    
+                # Fall back to pattern-based contextual geocoding
+                context_clues = self._detect_geographical_context(processed_text, entities)
                 if self._try_contextual_geocoding(entity, context_clues):
                     continue
                     
-                # Fall back to OpenStreetMap
+                # Final fallback to OpenStreetMap
                 if self._try_openstreetmap(entity):
                     continue
         
         return entities
+
+    def _llm_detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> str:
+        """Use LLM to intelligently detect geographical context from the full text."""
+        try:
+            import google.generativeai as genai
+            
+            # Check for API key
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                return ""
+            
+            # Extract place entities for context
+            place_entities = [e['text'] for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY']]
+            
+            prompt = f"""Analyze this text to determine the PRIMARY geographical context for geocoding purposes.
+
+TEXT: "{text[:1000]}..."
+
+PLACE ENTITIES FOUND: {', '.join(place_entities)}
+
+What is the PRIMARY geographical region/country/city context for this text? 
+This will be used to disambiguate place names for geocoding.
+
+Consider:
+- Are there explicit location mentions?
+- Historical/cultural context clues?
+- Language/terminology that suggests a region?
+- Time period that suggests a location?
+
+Respond with ONLY the most specific geographical context you can determine, in this format:
+- For modern texts: "London, UK" or "New York, USA" or "Paris, France"
+- For historical texts: "Ancient Greece" or "Roman Empire" or "Medieval England"
+- For unclear contexts: "Europe" or "North America" or "Unknown"
+
+Response (geographical context only):"""
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            response = model.generate_content(prompt)
+            context = response.text.strip()
+            
+            # Clean up the response to extract just the location
+            context = context.replace('"', '').replace("'", '').strip()
+            
+            return context
+            
+        except Exception as e:
+            print(f"LLM geographical context detection failed: {e}")
+            return ""
+
+    def _try_llm_contextual_geocoding(self, entity, geographical_context, full_text):
+        """Try geocoding using LLM-detected geographical context."""
+        if not geographical_context or geographical_context.lower() == 'unknown':
+            return False
+        
+        # Create context-aware search terms using LLM insights
+        search_variations = [entity['text']]
+        
+        # Add LLM-detected context
+        if geographical_context:
+            search_variations.append(f"{entity['text']}, {geographical_context}")
+            
+            # Handle historical contexts by modernizing them
+            context_mappings = {
+                'Ancient Greece': 'Greece',
+                'Roman Empire': 'Italy',
+                'Medieval England': 'England, UK',
+                'Victorian London': 'London, UK',
+                'Classical Athens': 'Athens, Greece',
+                'Ancient Rome': 'Rome, Italy'
+            }
+            
+            modern_context = context_mappings.get(geographical_context, geographical_context)
+            if modern_context != geographical_context:
+                search_variations.append(f"{entity['text']}, {modern_context}")
+        
+        # For FACILITY entities, be more specific about the type
+        if entity['type'] == 'FACILITY':
+            # Extract surrounding context to understand what kind of facility
+            entity_context = self._extract_facility_context(entity, full_text)
+            if entity_context:
+                search_variations.append(f"{entity['text']} {entity_context}, {geographical_context}")
+        
+        # Remove duplicates while preserving order
+        search_variations = list(dict.fromkeys(search_variations))
+        
+        # Try OpenStreetMap with LLM-enhanced context
+        for search_term in search_variations[:3]:  # Try top 3 variations
+            try:
+                url = "https://nominatim.openstreetmap.org/search"
+                params = {
+                    'q': search_term,
+                    'format': 'json',
+                    'limit': 1,
+                    'addressdetails': 1
+                }
+                headers = {'User-Agent': 'EntityLinker/1.0'}
+            
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data:
+                        result = data[0]
+                        entity['latitude'] = float(result['lat'])
+                        entity['longitude'] = float(result['lon'])
+                        entity['location_name'] = result['display_name']
+                        entity['geocoding_source'] = 'llm_contextual'
+                        entity['search_term_used'] = search_term
+                        entity['llm_geographical_context'] = geographical_context
+                        return True
+            
+                time.sleep(0.3)  # Rate limiting
+            except Exception:
+                continue
+        
+        return False
+
+    def _extract_facility_context(self, entity, full_text):
+        """Extract context around a facility entity to determine its type."""
+        # Get text around the entity
+        start = max(0, entity['start'] - 50)
+        end = min(len(full_text), entity['end'] + 50)
+        context = full_text[start:end].lower()
+        
+        # Look for facility type indicators
+        facility_indicators = {
+            'theatre': ['theatre', 'theater', 'play', 'performance', 'stage'],
+            'hospital': ['hospital', 'medical', 'clinic', 'ward'],
+            'school': ['school', 'university', 'college', 'academy'],
+            'church': ['church', 'cathedral', 'abbey', 'monastery'],
+            'hotel': ['hotel', 'inn', 'lodge', 'accommodation'],
+            'museum': ['museum', 'gallery', 'exhibition'],
+            'library': ['library', 'archive', 'collection']
+        }
+        
+        for facility_type, indicators in facility_indicators.items():
+            if any(indicator in context for indicator in indicators):
+                return facility_type
+        
+        return ""
 
     def _try_contextual_geocoding(self, entity, context_clues):
         """Try geocoding with geographical context."""
