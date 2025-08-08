@@ -680,9 +680,9 @@ Brief reasoning: Why this choice fits the historical context?
         """Use LLM to help disambiguate Wikipedia results based on context - LAST RESORT only."""
         
         for entity in entities:
-            # Skip if already has higher priority links (Wikidata, Getty AAT, or Britannica)
-            if (entity.get('wikidata_url') or 
-                entity.get('getty_aat_url') or 
+            # Skip if already has higher priority links (Getty AAT, Wikidata, or Britannica)
+            if (entity.get('getty_aat_url') or 
+                entity.get('wikidata_url') or 
                 entity.get('britannica_url')):
                 continue
                 
@@ -972,8 +972,11 @@ Response (geographical context only):"""
         return False
 
     def link_to_wikidata(self, entities):
-        """Add context-aware Wikidata linking."""
+        """Add context-aware Wikidata linking - only for entities without Getty AAT links."""
         for entity in entities:
+            # Skip if already has Getty AAT link (higher priority)
+            if entity.get('getty_aat_url'):
+                continue
             try:
                 # Get context from entity if available
                 entity_context = entity.get('context', {})
@@ -1146,75 +1149,175 @@ Response (geographical context only):"""
     def link_to_getty_aat(self, entities):
         """Add Getty Art & Architecture Thesaurus linking - especially good for PRODUCT, FACILITY, WORK_OF_ART entities."""
         for entity in entities:
-            # Skip if already has higher priority links
-            if entity.get('wikidata_url'):
-                continue
-                
             # Getty AAT is particularly valuable for these entity types
             relevant_types = ['PRODUCT', 'FACILITY', 'WORK_OF_ART', 'EVENT', 'ORGANIZATION']
             if entity['type'] not in relevant_types:
                 continue
                 
             try:
-                # Getty AAT SPARQL endpoint
-                query = f"""
-                PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-                PREFIX gvp: <http://vocab.getty.edu/ontology#>
+                # Try multiple approaches to find Getty AAT entries
+                getty_result = None
                 
-                SELECT ?concept ?prefLabel ?note WHERE {{
-                  ?concept skos:inScheme <http://vocab.getty.edu/aat/> ;
-                           skos:prefLabel ?prefLabel ;
-                           gvp:prefLabelGVP/gvp:term ?term .
-                  OPTIONAL {{ ?concept skos:scopeNote/rdf:value ?note }}
-                  FILTER(CONTAINS(LCASE(?term), LCASE("{entity['text']}")))
-                }}
-                LIMIT 3
-                """
+                # Method 1: Direct search via Getty's search API (more reliable than SPARQL)
+                getty_result = self._search_getty_api(entity['text'])
                 
-                headers = {
-                    'Accept': 'application/sparql-results+json',
-                    'User-Agent': 'EntityLinker/1.0'
-                }
+                if not getty_result:
+                    # Method 2: Try variations of the search term
+                    variations = self._create_getty_search_variations(entity['text'], entity['type'])
+                    for variation in variations:
+                        getty_result = self._search_getty_api(variation)
+                        if getty_result:
+                            break
                 
-                sparql_endpoint = "http://vocab.getty.edu/sparql"
-                response = requests.get(sparql_endpoint, 
-                                      params={'query': query}, 
-                                      headers=headers, 
-                                      timeout=10)
+                if getty_result:
+                    entity['getty_aat_url'] = getty_result['url']
+                    entity['getty_aat_label'] = getty_result['label']
+                    entity['getty_aat_description'] = getty_result['description']
+                    entity['getty_search_term'] = getty_result['search_term']
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    results = data.get('results', {}).get('bindings', [])
-                    
-                    if results:
-                        # Take the first result
-                        result = results[0]
-                        concept_uri = result['concept']['value']
-                        pref_label = result['prefLabel']['value']
-                        
-                        # Convert to web URL
-                        getty_url = concept_uri.replace('http://vocab.getty.edu/aat/', 
-                                                      'http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid=')
-                        
-                        entity['getty_aat_url'] = getty_url
-                        entity['getty_aat_label'] = pref_label
-                        
-                        if 'note' in result:
-                            entity['getty_aat_description'] = result['note']['value'][:200]
-                
-                time.sleep(0.3)  # Rate limiting for Getty
+                time.sleep(0.5)  # More conservative rate limiting for Getty
                 
             except Exception as e:
-                # Getty AAT can be unreliable, continue silently
+                print(f"Getty AAT search failed for {entity['text']}: {e}")
+                # Continue silently - Getty can be unreliable
                 pass
         
         return entities
 
+    def _search_getty_api(self, search_term):
+        """Search Getty AAT using their REST API instead of SPARQL."""
+        try:
+            # Getty's Vocabulary Program API
+            search_url = "http://vocab.getty.edu/sparql.json"
+            
+            # Simplified SPARQL query that's more likely to work
+            query = f"""
+            PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+            PREFIX gvp: <http://vocab.getty.edu/ontology#>
+            PREFIX xl: <http://www.w3.org/2008/05/skos-xl#>
+            
+            SELECT ?subject ?term ?note WHERE {{
+              ?subject skos:inScheme <http://vocab.getty.edu/aat/> ;
+                       gvp:prefLabelGVP/xl:literalForm ?term ;
+                       skos:scopeNote ?noteObj .
+              ?noteObj rdf:value ?note .
+              FILTER(CONTAINS(LCASE(?term), LCASE("{search_term}")))
+            }}
+            LIMIT 5
+            """
+            
+            headers = {
+                'Accept': 'application/sparql-results+json',
+                'User-Agent': 'EntityLinker/1.0'
+            }
+            
+            response = requests.get(search_url, 
+                                  params={'query': query}, 
+                                  headers=headers, 
+                                  timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', {}).get('bindings', [])
+                
+                if results:
+                    result = results[0]  # Take first result
+                    subject_uri = result['subject']['value']
+                    term = result['term']['value']
+                    note = result.get('note', {}).get('value', '')
+                    
+                    # Convert URI to web URL
+                    aat_id = subject_uri.split('/')[-1]
+                    web_url = f"http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid={aat_id}"
+                    
+                    return {
+                        'url': web_url,
+                        'label': term,
+                        'description': note[:200] if note else f"Getty AAT entry for {term}",
+                        'search_term': search_term
+                    }
+            
+            # Fallback: Try alternative Getty search approach
+            return self._search_getty_alternative(search_term)
+            
+        except Exception as e:
+            print(f"Getty SPARQL search failed for '{search_term}': {e}")
+            return self._search_getty_alternative(search_term)
+
+    def _search_getty_alternative(self, search_term):
+        """Alternative Getty search using their web interface."""
+        try:
+            # Search Getty's web interface directly
+            search_url = "http://www.getty.edu/vow/AATServlet"
+            params = {
+                'english': 'N',
+                'find': search_term,
+                'logic': 'AND',
+                'note': '',
+                'page': '1'
+            }
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(search_url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                # Look for AAT entries in the response
+                import re
+                # Find AAT IDs in the response
+                aat_pattern = r'AATFullDisplay\?[^"]*subjectid=(\d+)[^"]*"[^>]*>([^<]+)</a>'
+                matches = re.findall(aat_pattern, response.text)
+                
+                if matches:
+                    aat_id, label = matches[0]
+                    web_url = f"http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid={aat_id}"
+                    
+                    return {
+                        'url': web_url,
+                        'label': label.strip(),
+                        'description': f"Getty AAT architectural/cultural term: {label.strip()}",
+                        'search_term': search_term
+                    }
+            
+        except Exception as e:
+            print(f"Getty alternative search failed for '{search_term}': {e}")
+        
+        return None
+
+    def _create_getty_search_variations(self, text, entity_type):
+        """Create search variations optimized for Getty AAT."""
+        variations = [text]
+        text_lower = text.lower()
+        
+        # Add plurals/singulars
+        if text_lower.endswith('s') and len(text) > 3:
+            variations.append(text[:-1])  # Remove 's'
+        elif not text_lower.endswith('s'):
+            variations.append(text + 's')  # Add 's'
+        
+        # Add architectural/cultural terms for different entity types
+        if entity_type == 'FACILITY':
+            facility_terms = ['building', 'structure', 'architecture']
+            variations.extend([f"{text} {term}" for term in facility_terms])
+            
+        elif entity_type == 'PRODUCT':
+            product_terms = ['architectural element', 'component', 'feature']
+            variations.extend([f"{text} {term}" for term in product_terms])
+            
+        elif entity_type == 'WORK_OF_ART':
+            art_terms = ['art', 'artwork', 'creative work']
+            variations.extend([f"{text} {term}" for term in art_terms])
+        
+        # Remove duplicates
+        return list(dict.fromkeys(variations))[:5]  # Limit to 5 variations
+
     def link_to_britannica(self, entities):
-        """Add basic Britannica linking - only for entities without higher priority links.""" 
+        """Add basic Britannica linking - only for entities without Getty AAT or Wikidata links.""" 
         for entity in entities:
-            # Skip if already has Wikidata or Getty AAT link
-            if entity.get('wikidata_url') or entity.get('getty_aat_url'):
+            # Skip if already has Getty AAT or Wikidata link
+            if entity.get('getty_aat_url') or entity.get('wikidata_url'):
                 continue
                 
             try:
@@ -1400,7 +1503,7 @@ class StreamlitLLMEntityLinker:
         """Render the sidebar with information about LLM disambiguation."""
         # Entity linking information
         st.sidebar.subheader("Smart Entity Linking")
-        st.sidebar.info("Entities are linked with priority hierarchy: 1) Wikidata (authoritative structured data), 2) Getty AAT (art & architecture terminology), 3) Britannica (scholarly encyclopedia), 4) Wikipedia (general reference). The LLM provides intelligent disambiguation for the final step.")
+        st.sidebar.info("Entities are linked with priority hierarchy: 1) Getty AAT (authoritative art & architecture terminology), 2) Wikidata (structured knowledge), 3) Britannica (scholarly encyclopedia), 4) Wikipedia (general reference). The LLM provides intelligent disambiguation for the final step.")
         
         st.sidebar.subheader("Geocoding")
         st.sidebar.info("Places and addresses are geocoded using multiple services with contextual hints for accurate coordinates.")
@@ -1496,17 +1599,17 @@ class StreamlitLLMEntityLinker:
                     st.warning("No entities found in the text.")
                     return
                 
-                # Step 3: Link to Wikidata (cached) - FIRST PRIORITY
-                status_text.text("Linking to Wikidata...")
+                # Step 3: Link to Getty AAT - FIRST PRIORITY for cultural/architectural terms
+                status_text.text("Linking to Getty Art & Architecture Thesaurus...")
                 progress_bar.progress(40)
+                entities = self.entity_linker.link_to_getty_aat(entities)
+                
+                # Step 4: Link to Wikidata - SECOND PRIORITY for general structured data
+                status_text.text("Linking to Wikidata...")
+                progress_bar.progress(50)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_wikidata(entities_json)
                 entities = json.loads(linked_entities_json)
-                
-                # Step 4: Link to Getty AAT - SECOND PRIORITY
-                status_text.text("Linking to Getty Art & Architecture Thesaurus...")
-                progress_bar.progress(50)
-                entities = self.entity_linker.link_to_getty_aat(entities)
                 
                 # Step 5: Link to Britannica - THIRD PRIORITY
                 status_text.text("Linking to Britannica...")
@@ -1677,12 +1780,12 @@ class StreamlitLLMEntityLinker:
                 color = colors.get(entity['type'], '#E7E2D2')
                 
                 tooltip_parts = [f"Type: {entity['type']}"]
-                if entity.get('wikidata_description'):
-                    desc = entity['wikidata_description'][:100]  # Limit description length
-                    tooltip_parts.append(f"Description: {desc}")
-                elif entity.get('getty_aat_description'):
+                if entity.get('getty_aat_description'):
                     desc = entity['getty_aat_description'][:100]
                     tooltip_parts.append(f"Getty AAT: {desc}")
+                elif entity.get('wikidata_description'):
+                    desc = entity['wikidata_description'][:100]  # Limit description length
+                    tooltip_parts.append(f"Description: {desc}")
                 elif entity.get('wikipedia_description'):
                     desc = entity['wikipedia_description'][:100]
                     tooltip_parts.append(f"Description: {desc}")
@@ -1694,8 +1797,8 @@ class StreamlitLLMEntityLinker:
                 
                 tooltip = html_module.escape(" | ".join(tooltip_parts))
                 
-                url = (entity.get('wikidata_url') or
-                      entity.get('getty_aat_url') or
+                url = (entity.get('getty_aat_url') or
+                      entity.get('wikidata_url') or
                       entity.get('britannica_url') or
                       entity.get('wikipedia_url') or
                       entity.get('openstreetmap_url'))
@@ -1774,10 +1877,10 @@ class StreamlitLLMEntityLinker:
                 'Links': self.format_entity_links(entity)
             }
             
-            if entity.get('wikidata_description'):
-                row['Description'] = entity['wikidata_description']
-            elif entity.get('getty_aat_description'):
+            if entity.get('getty_aat_description'):
                 row['Description'] = entity['getty_aat_description']
+            elif entity.get('wikidata_description'):
+                row['Description'] = entity['wikidata_description']
             elif entity.get('britannica_title'):
                 row['Description'] = entity['britannica_title']
             elif entity.get('wikipedia_description'):
@@ -1804,10 +1907,10 @@ class StreamlitLLMEntityLinker:
     def format_entity_links(self, entity: Dict[str, Any]) -> str:
         """Format entity links for display in table - updated priority order."""
         links = []
-        if entity.get('wikidata_url'):
-            links.append("Wikidata")
         if entity.get('getty_aat_url'):
             links.append("Getty AAT")
+        if entity.get('wikidata_url'):
+            links.append("Wikidata")
         if entity.get('britannica_url'):
             links.append("Britannica")
         if entity.get('wikipedia_url'):
@@ -1848,13 +1951,24 @@ class StreamlitLLMEntityLinker:
                 if entity.get('candidates_considered'):
                     entity_data['candidatesConsidered'] = entity['candidates_considered']
                 
-                if entity.get('wikidata_url'):
-                    entity_data['sameAs'] = entity['wikidata_url']
+                # Add Getty AAT link first
+                if entity.get('getty_aat_url'):
+                    entity_data['sameAs'] = entity['getty_aat_url']
                 
-                if entity.get('wikidata_description'):
-                    entity_data['description'] = entity['wikidata_description']
-                elif entity.get('getty_aat_description'):
+                # Add Wikidata link
+                if entity.get('wikidata_url'):
+                    if 'sameAs' in entity_data:
+                        if isinstance(entity_data['sameAs'], str):
+                            entity_data['sameAs'] = [entity_data['sameAs'], entity['wikidata_url']]
+                        else:
+                            entity_data['sameAs'].append(entity['wikidata_url'])
+                    else:
+                        entity_data['sameAs'] = entity['wikidata_url']
+                
+                if entity.get('getty_aat_description'):
                     entity_data['description'] = entity['getty_aat_description']
+                elif entity.get('wikidata_description'):
+                    entity_data['description'] = entity['wikidata_description']
                 elif entity.get('britannica_title'):
                     entity_data['description'] = entity['britannica_title']
                 elif entity.get('wikipedia_description'):
