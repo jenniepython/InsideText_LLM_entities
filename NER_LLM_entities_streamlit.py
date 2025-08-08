@@ -2,12 +2,11 @@
 """
 Streamlit LLM Entity Linker Application
 
-A web interface for entity extraction using LLM (Gemini) with linking and geocoding.
-This application provides the same look and feel as the NLTK version but uses
-LLM for entity recognition.
+A web interface for entity extraction using LLM (Gemini) with intelligent linking and geocoding.
+This application uses LLM for both entity extraction AND disambiguation of Wikipedia links.
 
 Author: Enhanced from NER_LLM_entities_streamlit.py
-Version: 2.0
+Version: 3.0 - Added LLM-powered disambiguation
 """
 
 import streamlit as st
@@ -92,8 +91,8 @@ class LLMEntityLinker:
     """
     Main class for LLM-based entity linking functionality.
     
-    This class uses Gemini for entity extraction and provides the same
-    linking and geocoding capabilities as the NLTK version.
+    This class uses Gemini for entity extraction AND intelligent disambiguation
+    of Wikipedia links based on context.
     """
     
     def __init__(self):
@@ -441,6 +440,175 @@ Output (JSON array only):
         
         return context
 
+    def get_wikipedia_candidates(self, entity_text, limit=5):
+        """Get multiple Wikipedia candidates for disambiguation."""
+        
+        search_url = "https://en.wikipedia.org/w/api.php"
+        search_params = {
+            'action': 'query',
+            'format': 'json',
+            'list': 'search',
+            'srsearch': entity_text,
+            'srlimit': limit,
+            'srnamespace': 0  # Only search main namespace
+        }
+        
+        try:
+            headers = {'User-Agent': 'EntityLinker/1.0'}
+            response = requests.get(search_url, params=search_params, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                candidates = []
+                
+                for result in data.get('query', {}).get('search', []):
+                    # Skip obviously bad results
+                    snippet = result.get('snippet', '').lower()
+                    title = result.get('title', '').lower()
+                    
+                    # Filter out unwanted results
+                    if any(term in snippet or term in title for term in [
+                        'wiktionary', 'look up', 'disambiguation page',
+                        'may refer to:', 'disambiguation'
+                    ]):
+                        continue
+                    
+                    # Clean up the snippet
+                    clean_snippet = re.sub(r'<[^>]+>', '', result.get('snippet', ''))
+                    
+                    candidates.append({
+                        'title': result['title'],
+                        'description': clean_snippet,
+                        'url': f"https://en.wikipedia.org/wiki/{urllib.parse.quote(result['title'].replace(' ', '_'))}"
+                    })
+                
+                return candidates
+                
+        except Exception as e:
+            print(f"Error getting Wikipedia candidates: {e}")
+            
+        return []
+
+    def llm_disambiguate_wikipedia(self, entity, candidates, full_text):
+        """Use Gemini to pick the best Wikipedia match based on context."""
+        
+        if not candidates:
+            return None
+            
+        if len(candidates) == 1:
+            return candidates[0]
+        
+        try:
+            import google.generativeai as genai
+            
+            # Check for API key
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                return candidates[0]  # Fallback to first result
+            
+            # Prepare context snippet around the entity
+            start = max(0, entity['start'] - 150)
+            end = min(len(full_text), entity['end'] + 150)
+            context = full_text[start:end]
+            
+            # Prepare candidates for LLM
+            candidates_text = []
+            for i, candidate in enumerate(candidates):
+                description = candidate['description'][:300]  # Limit description length
+                candidates_text.append(
+                    f"{i+1}. {candidate['title']}: {description}"
+                )
+            
+            prompt = f"""You are helping disambiguate a Wikipedia link. Given the context and entity, pick the BEST match.
+
+ENTITY: "{entity['text']}" (Type: {entity['type']})
+
+CONTEXT: "...{context}..."
+
+CANDIDATES:
+{chr(10).join(candidates_text)}
+
+Which candidate (1-{len(candidates)}) is the BEST match for this entity in this context?
+If NONE are good matches, respond with "NONE".
+
+Consider:
+- Historical vs modern context
+- Geographic relevance
+- Subject matter alignment
+- Entity type appropriateness
+
+Response format: Just the number (1-{len(candidates)}) or "NONE"
+Brief reasoning: Why this choice?
+"""
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            response = model.generate_content(prompt)
+            result = response.text.strip()
+            
+            # Parse the response
+            if "NONE" in result.upper():
+                return None
+                
+            # Extract number
+            match = re.search(r'(\d+)', result)
+            if match:
+                choice = int(match.group(1)) - 1  # Convert to 0-based index
+                if 0 <= choice < len(candidates):
+                    return candidates[choice]
+            
+            # If we can't parse the response, use some heuristics
+            entity_context = entity.get('context', {})
+            
+            # For ancient/historical contexts, prefer results with historical keywords
+            if entity_context.get('period') == 'ancient':
+                for candidate in candidates:
+                    desc_lower = candidate['description'].lower()
+                    if any(term in desc_lower for term in [
+                        'ancient', 'classical', 'mythology', 'mythological', 
+                        'greek', 'roman', 'historical', 'antiquity'
+                    ]):
+                        return candidate
+            
+            # Default fallback
+            return candidates[0]
+                
+        except Exception as e:
+            print(f"LLM disambiguation failed: {e}")
+            
+        # Fallback to first candidate
+        return candidates[0] if candidates else None
+
+    def link_to_wikipedia_with_llm_disambiguation(self, entities, full_text):
+        """Use LLM to help disambiguate Wikipedia results based on context."""
+        
+        for entity in entities:
+            if entity.get('wikidata_url') or entity.get('wikipedia_url'):
+                continue  # Skip if already linked
+                
+            try:
+                # Get multiple Wikipedia candidates
+                candidates = self.get_wikipedia_candidates(entity['text'])
+                
+                if candidates:
+                    # Use LLM to pick the best match
+                    best_match = self.llm_disambiguate_wikipedia(entity, candidates, full_text)
+                    if best_match:
+                        entity['wikipedia_url'] = best_match['url']
+                        entity['wikipedia_title'] = best_match['title']
+                        entity['wikipedia_description'] = best_match['description']
+                        entity['disambiguation_method'] = 'llm_contextual'
+                        
+                        # Add note about which candidates were considered
+                        entity['candidates_considered'] = len(candidates)
+                
+                time.sleep(0.2)  # Rate limiting
+                
+            except Exception as e:
+                print(f"Error in LLM Wikipedia disambiguation for {entity['text']}: {e}")
+        
+        return entities
+
     def get_coordinates(self, entities, processed_text=""):
         """Enhanced coordinate lookup with geographical context detection."""
         # Detect geographical context from the full text
@@ -729,162 +897,6 @@ Output (JSON array only):
         # Return the most relevant context clues (limit to avoid over-constraining)
         return context_clues[:3]
 
-    def link_to_wikipedia_contextual(self, entities, text_context):
-        """Add contextual Wikipedia linking that works for any text type."""
-        for entity in entities:
-            # Skip if already has Wikidata link
-            if entity.get('wikidata_url'):
-                continue
-                
-            try:
-                # Get entity context from extraction
-                entity_context = entity.get('context', text_context)
-                
-                # Create context-aware search terms - generalized approach
-                search_terms = [entity['text']]
-                
-                # Add context based on detected patterns, not hardcoded regions
-                context_modifiers = []
-                
-                # Add period context
-                if entity_context.get('time_indicators'):
-                    context_modifiers.extend(entity_context['time_indicators'])
-                
-                # Add subject matter context
-                if entity_context.get('subject_indicators'):
-                    context_modifiers.extend(entity_context['subject_indicators'])
-                
-                # Add place context
-                if entity_context.get('place_indicators'):
-                    context_modifiers.extend(entity_context['place_indicators'])
-                
-                # Add general historical context if period is detected
-                if entity_context.get('period') and entity_context['period'] != 'modern':
-                    context_modifiers.extend(['historical', entity_context['period']])
-                
-                # Create contextual search terms for different entity types
-                if entity['type'] in ['GPE', 'LOCATION'] and context_modifiers:
-                    for modifier in context_modifiers[:3]:  # Top 3 modifiers
-                        search_terms.append(f"{entity['text']} {modifier}")
-                        if modifier != 'historical':  # Avoid double historical
-                            search_terms.append(f"{modifier} {entity['text']}")
-                
-                elif entity['type'] == 'PERSON' and context_modifiers:
-                    for modifier in context_modifiers[:3]:
-                        search_terms.append(f"{entity['text']} {modifier}")
-                        # Add biographical terms
-                        if entity_context.get('period') and entity_context['period'] != 'modern':
-                            search_terms.append(f"{entity['text']} biography")
-                
-                elif entity['type'] == 'ORGANIZATION' and context_modifiers:
-                    for modifier in context_modifiers[:2]:
-                        search_terms.append(f"{entity['text']} {modifier}")
-                
-                elif entity['type'] in ['FACILITY', 'PRODUCT'] and 'theater' in context_modifiers:
-                    search_terms.extend([
-                        f"{entity['text']} theatre",
-                        f"{entity['text']} theater architecture"
-                    ])
-                
-                # Remove duplicates and limit search terms
-                search_terms = list(dict.fromkeys(search_terms))[:4]
-                
-                # Try each contextual search term
-                for search_term in search_terms:
-                    search_url = "https://en.wikipedia.org/w/api.php"
-                    search_params = {
-                        'action': 'query',
-                        'format': 'json',
-                        'list': 'search',
-                        'srsearch': search_term,
-                        'srlimit': 1
-                    }
-                    
-                    headers = {'User-Agent': 'EntityLinker/1.0'}
-                    response = requests.get(search_url, params=search_params, headers=headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get('query', {}).get('search'):
-                            result = data['query']['search'][0]
-                            page_title = result['title']
-                            
-                            # Basic validation - check if result seems relevant
-                            snippet = result.get('snippet', '').lower()
-                            title_lower = page_title.lower()
-                            
-                            # Skip clearly irrelevant results
-                            skip_terms = ['video game', 'software', 'app', 'company', 'corporation', 'brand']
-                            if entity_context.get('period') and entity_context['period'] != 'modern':
-                                if any(term in snippet or term in title_lower for term in skip_terms):
-                                    continue  # Try next search term
-                            
-                            # Accept result if it seems reasonable
-                            encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
-                            entity['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{encoded_title}"
-                            entity['wikipedia_title'] = page_title
-                            
-                            # Get a snippet/description from the search result
-                            if result.get('snippet'):
-                                snippet_clean = re.sub(r'<[^>]+>', '', result['snippet'])
-                                entity['wikipedia_description'] = snippet_clean[:200] + "..." if len(snippet_clean) > 200 else snippet_clean
-                            
-                            # Mark which search term worked
-                            entity['search_context'] = search_term
-                            break
-                    
-                    time.sleep(0.2)  # Rate limiting
-                
-            except Exception as e:
-                pass
-        
-        return entities
-
-    def link_to_wikipedia(self, entities):
-        """Add Wikipedia linking for entities without Wikidata links."""
-        for entity in entities:
-            # Skip if already has Wikidata link
-            if entity.get('wikidata_url'):
-                continue
-                
-            try:
-                # Use Wikipedia's search API
-                search_url = "https://en.wikipedia.org/w/api.php"
-                search_params = {
-                    'action': 'query',
-                    'format': 'json',
-                    'list': 'search',
-                    'srsearch': entity['text'],
-                    'srlimit': 1
-                }
-                
-                headers = {'User-Agent': 'EntityLinker/1.0'}
-                response = requests.get(search_url, params=search_params, headers=headers, timeout=10)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('query', {}).get('search'):
-                        # Get the first search result
-                        result = data['query']['search'][0]
-                        page_title = result['title']
-                        
-                        # Create Wikipedia URL
-                        encoded_title = urllib.parse.quote(page_title.replace(' ', '_'))
-                        entity['wikipedia_url'] = f"https://en.wikipedia.org/wiki/{encoded_title}"
-                        entity['wikipedia_title'] = page_title
-                        
-                        # Get a snippet/description from the search result
-                        if result.get('snippet'):
-                            # Clean up the snippet (remove HTML tags)
-                            snippet = re.sub(r'<[^>]+>', '', result['snippet'])
-                            entity['wikipedia_description'] = snippet[:200] + "..." if len(snippet) > 200 else snippet
-                
-                time.sleep(0.2)  # Rate limiting
-            except Exception as e:
-                pass
-        
-        return entities
-
     def link_to_britannica(self, entities):
         """Add basic Britannica linking.""" 
         for entity in entities:
@@ -963,7 +975,8 @@ class StreamlitLLMEntityLinker:
     """
     Streamlit wrapper for the LLM Entity Linker class.
     
-    Provides the same interface as the NLTK version but uses LLM for entity extraction.
+    Provides the same interface as the NLTK version but uses LLM for entity extraction
+    AND intelligent disambiguation of Wikipedia links.
     """
     
     def __init__(self):
@@ -1002,13 +1015,6 @@ class StreamlitLLMEntityLinker:
         linked_entities = _self.entity_linker.link_to_britannica(entities)
         return json.dumps(linked_entities, default=str)
 
-    @st.cache_data
-    def cached_link_to_wikipedia(_self, entities_json: str) -> str:
-        """Cached Wikipedia linking."""
-        entities = json.loads(entities_json)
-        linked_entities = _self.entity_linker.link_to_wikipedia(entities)
-        return json.dumps(linked_entities, default=str)
-
     def render_header(self):
         """Render the application header with logo - same as NLTK app."""
         # Display logo if it exists
@@ -1020,7 +1026,7 @@ class StreamlitLLMEntityLinker:
                 st.image(logo_path, width=300)  # Adjust width as needed
             else:
                 # If logo file doesn't exist, show a placeholder or message
-                st.info("💡 Place your logo.png file in the same directory as this app to display it here")
+                st.info("Place your logo.png file in the same directory as this app to display it here")
         except Exception as e:
             # If there's any error loading the logo, continue without it
             st.warning(f"Could not load logo: {e}")        
@@ -1029,9 +1035,9 @@ class StreamlitLLMEntityLinker:
         
         # Main title and description
         st.header("From Text to Linked Data using LLM")
-        st.markdown("**Extract and link named entities from text using Gemini LLM**")
+        st.markdown("**Extract and link named entities from text using Gemini LLM with intelligent disambiguation**")
         
-        # Create a simple process diagram - same as NLTK app but with LLM
+        # Create a simple process diagram - enhanced with LLM disambiguation
         st.markdown("""
         <div style="background-color: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #E0D7C0;">
             <div style="text-align: center; margin-bottom: 20px;">
@@ -1041,6 +1047,10 @@ class StreamlitLLMEntityLinker:
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>Gemini LLM Entity Recognition</strong>
+                </div>
+                <div style="margin: 10px 0;">⬇️</div>
+                <div style="background-color: #BF7B69; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
+                     <strong>LLM-Powered Disambiguation</strong><br><small>Context-aware linking decisions</small>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="text-align: center;">
@@ -1053,7 +1063,7 @@ class StreamlitLLMEntityLinker:
                     <div style="background-color: #C3B5AC; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
                         <strong>Wikipedia/Britannica</strong><br><small>Encyclopedia articles</small>
                     </div>
-                    <div style="background-color: #BF7B69; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
+                    <div style="background-color: #E6D7C9; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
                          <strong>Geocoding</strong><br><small>Coordinates & locations</small>
                     </div>
                 </div>
@@ -1074,10 +1084,13 @@ class StreamlitLLMEntityLinker:
         """, unsafe_allow_html=True)
 
     def render_sidebar(self):
-        """Render the sidebar with minimal information - same as NLTK app."""
+        """Render the sidebar with information about LLM disambiguation."""
         # Entity linking information
-        st.sidebar.subheader("Entity Linking & Geocoding")
-        st.sidebar.info("Entities are extracted using Gemini LLM and linked to Wikidata first, then Wikipedia, then Britannica as fallbacks. Places and addresses are geocoded using multiple services for accurate coordinates.")
+        st.sidebar.subheader("Smart Entity Linking")
+        st.sidebar.info("Entities are extracted using Gemini LLM and linked intelligently using context-aware disambiguation. The LLM analyzes multiple candidates and picks the best match based on historical, geographical, and subject matter context.")
+        
+        st.sidebar.subheader("Geocoding")
+        st.sidebar.info("Places and addresses are geocoded using multiple services with contextual hints for accurate coordinates.")
 
     def render_input_section(self):
         """Render the text input section - same as NLTK app."""
@@ -1132,7 +1145,7 @@ class StreamlitLLMEntityLinker:
 
     def process_text(self, text: str, title: str):
         """
-        Process the input text using the LLM EntityLinker with contextual analysis.
+        Process the input text using the LLM EntityLinker with contextual analysis and intelligent disambiguation.
         
         Args:
             text: Input text to process
@@ -1172,19 +1185,19 @@ class StreamlitLLMEntityLinker:
                 
                 # Step 3: Link to Wikidata (cached)
                 status_text.text("Linking to Wikidata...")
-                progress_bar.progress(50)
+                progress_bar.progress(45)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_wikidata(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 4: Contextual Wikipedia linking
-                status_text.text("Linking to Wikipedia with context...")
-                progress_bar.progress(60)
-                entities = self.entity_linker.link_to_wikipedia_contextual(entities, text_context)
+                # Step 4: NEW - LLM-powered Wikipedia disambiguation
+                status_text.text("Smart Wikipedia linking with LLM disambiguation...")
+                progress_bar.progress(65)
+                entities = self.entity_linker.link_to_wikipedia_with_llm_disambiguation(entities, text)
                 
-                # Step 5: Link to Britannica (cached)
+                # Step 5: Link to Britannica (cached) - for entities without Wikipedia links
                 status_text.text("Linking to Britannica...")
-                progress_bar.progress(70)
+                progress_bar.progress(75)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_britannica(entities_json)
                 entities = json.loads(linked_entities_json)
@@ -1235,7 +1248,9 @@ class StreamlitLLMEntityLinker:
                 progress_bar.empty()
                 status_text.empty()
                 
-                # Show context analysis results
+                # Show context analysis results and disambiguation stats
+                disambiguation_stats = self._get_disambiguation_stats(entities)
+                
                 if text_context['period'] or text_context['region'] or text_context['subject_matter']:
                     st.success(f"Processing complete! Found {len(entities)} entities.")
                     context_info = []
@@ -1250,9 +1265,29 @@ class StreamlitLLMEntityLinker:
                 else:
                     st.success(f"Processing complete! Found {len(entities)} entities.")
                 
+                # Show disambiguation info
+                if disambiguation_stats['llm_disambiguated'] > 0:
+                    st.info(f"LLM intelligently disambiguated {disambiguation_stats['llm_disambiguated']} Wikipedia links using context")
+                
             except Exception as e:
                 st.error(f"Error processing text: {e}")
                 st.exception(e)
+
+    def _get_disambiguation_stats(self, entities):
+        """Get statistics about disambiguation methods used."""
+        stats = {
+            'llm_disambiguated': 0,
+            'single_candidate': 0,
+            'fallback': 0
+        }
+        
+        for entity in entities:
+            if entity.get('disambiguation_method') == 'llm_contextual':
+                stats['llm_disambiguated'] += 1
+            elif entity.get('candidates_considered') == 1:
+                stats['single_candidate'] += 1
+        
+        return stats
 
     def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
         """
@@ -1330,6 +1365,8 @@ class StreamlitLLMEntityLinker:
                 if entity.get('location_name'):
                     loc = entity['location_name'][:100]  # Limit location length
                     tooltip_parts.append(f"Location: {loc}")
+                if entity.get('disambiguation_method') == 'llm_contextual':
+                    tooltip_parts.append("LLM disambiguated")
                 
                 tooltip = html_module.escape(" | ".join(tooltip_parts))
                 
@@ -1359,7 +1396,7 @@ class StreamlitLLMEntityLinker:
         return ''.join(result)
 
     def render_results(self):
-        """Render the results section with entities and visualisations - same as NLTK app."""
+        """Render the results section with entities and visualisations - enhanced with disambiguation info."""
         if not st.session_state.entities:
             st.info("Enter some text above and click 'Process Text' to see results.")
             return
@@ -1367,6 +1404,17 @@ class StreamlitLLMEntityLinker:
         entities = st.session_state.entities
         
         st.header("Results")
+        
+        # Show disambiguation statistics
+        disambiguation_stats = self._get_disambiguation_stats(entities)
+        if disambiguation_stats['llm_disambiguated'] > 0:
+            st.markdown(f"""
+            <div style="background-color: #E8F4FD; padding: 15px; border-radius: 8px; border-left: 4px solid #2196F3; margin-bottom: 20px;">
+                <strong>Smart Disambiguation Applied</strong><br>
+                The LLM intelligently selected the best Wikipedia links for <strong>{disambiguation_stats['llm_disambiguated']}</strong> entities 
+                by analyzing context, eliminating ambiguous results like "Look up X in Wiktionary" messages.
+            </div>
+            """, unsafe_allow_html=True)
         
         # Highlighted text
         st.subheader("Highlighted Text")
@@ -1387,7 +1435,7 @@ class StreamlitLLMEntityLinker:
             self.render_export_section(entities)
 
     def render_entity_table(self, entities: List[Dict[str, Any]]):
-        """Render a table of entity details - same as NLTK app."""
+        """Render a table of entity details - enhanced with disambiguation info."""
         if not entities:
             st.info("No entities found.")
             return
@@ -1412,6 +1460,14 @@ class StreamlitLLMEntityLinker:
                 row['Coordinates'] = f"{entity['latitude']:.4f}, {entity['longitude']:.4f}"
                 row['Location'] = entity.get('location_name', '')
             
+            # Add disambiguation method info
+            if entity.get('disambiguation_method') == 'llm_contextual':
+                row['Disambiguation'] = f"LLM (from {entity.get('candidates_considered', 1)} candidates)"
+            elif entity.get('candidates_considered'):
+                row['Disambiguation'] = f"Auto ({entity.get('candidates_considered', 1)} candidates)"
+            else:
+                row['Disambiguation'] = "Direct"
+            
             table_data.append(row)
         
         # Create DataFrame and display
@@ -1432,18 +1488,19 @@ class StreamlitLLMEntityLinker:
         return " | ".join(links) if links else "No links"
 
     def render_export_section(self, entities: List[Dict[str, Any]]):
-        """Render export options for the results - same as NLTK app."""
+        """Render export options for the results - enhanced with disambiguation metadata."""
         # Stack buttons vertically for mobile
         col1, col2 = st.columns(2)
         
         with col1:
-            # JSON export - create JSON-LD format
+            # JSON export - create JSON-LD format with disambiguation info
             json_data = {
                 "@context": "http://schema.org/",
                 "@type": "TextDigitalDocument",
                 "text": st.session_state.processed_text,
                 "dateCreated": str(pd.Timestamp.now().isoformat()),
                 "title": st.session_state.analysis_title,
+                "processingMethod": "LLM entity extraction with intelligent disambiguation",
                 "entities": []
             }
             
@@ -1455,6 +1512,12 @@ class StreamlitLLMEntityLinker:
                     "startOffset": entity['start'],
                     "endOffset": entity['end']
                 }
+                
+                # Add disambiguation metadata
+                if entity.get('disambiguation_method'):
+                    entity_data['disambiguationMethod'] = entity['disambiguation_method']
+                if entity.get('candidates_considered'):
+                    entity_data['candidatesConsidered'] = entity['candidates_considered']
                 
                 if entity.get('wikidata_url'):
                     entity_data['sameAs'] = entity['wikidata_url']
@@ -1522,7 +1585,7 @@ class StreamlitLLMEntityLinker:
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Entity Analysis</title>
+    <title>Entity Analysis - {st.session_state.analysis_title}</title>
     <style>
         body {{
             font-family: Arial, sans-serif;
@@ -1530,6 +1593,13 @@ class StreamlitLLMEntityLinker:
             margin: 0 auto;
             padding: 20px;
             line-height: 1.6;
+        }}
+        .processing-info {{
+            background-color: #f0f8ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196F3;
         }}
         @media (max-width: 768px) {{
             body {{
@@ -1539,6 +1609,10 @@ class StreamlitLLMEntityLinker:
     </style>
 </head>
 <body>
+    <div class="processing-info">
+        <strong>Generated by LLM Entity Linker</strong><br>
+        Entities extracted and disambiguated using Gemini LLM with intelligent context analysis.
+    </div>
     {st.session_state.html_content}
 </body>
 </html>"""
