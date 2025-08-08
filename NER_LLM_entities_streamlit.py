@@ -734,8 +734,8 @@ Brief reasoning: Why this choice fits the historical context?
                 if self._try_contextual_geocoding(entity, context_clues):
                     continue
                     
-                # Final fallback to OpenStreetMap
-                if self._try_openstreetmap(entity):
+                # Final fallback to OpenStreetMap with context
+                if self._try_openstreetmap(entity, geographical_context):
                     continue
         
         return entities
@@ -942,30 +942,60 @@ Response (geographical context only):"""
         
         return False
 
-    def _try_openstreetmap(self, entity):
-        """Fall back to direct OpenStreetMap Nominatim API."""
+    def _try_openstreetmap(self, entity, geographical_context=None):
+        """Fall back to direct OpenStreetMap Nominatim API with geographical context."""
         try:
-            url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                'q': entity['text'],
-                'format': 'json',
-                'limit': 1,
-                'addressdetails': 1
-            }
-            headers = {'User-Agent': 'EntityLinker/1.0'}
+            # Create search variations using geographical context
+            search_variations = [entity['text']]
+            
+            if geographical_context:
+                # Add the LLM-detected context
+                search_variations.append(f"{entity['text']}, {geographical_context}")
+                
+                # Handle historical contexts by modernizing them
+                context_mappings = {
+                    'Ancient Greece': 'Greece',
+                    'Roman Empire': 'Italy', 
+                    'Medieval England': 'England, UK',
+                    'Victorian London': 'London, UK',
+                    'Classical Athens': 'Athens, Greece',
+                    'Ancient Rome': 'Rome, Italy'
+                }
+                
+                modern_context = context_mappings.get(geographical_context, geographical_context)
+                if modern_context != geographical_context:
+                    search_variations.append(f"{entity['text']}, {modern_context}")
+            
+            # Remove duplicates while preserving order
+            search_variations = list(dict.fromkeys(search_variations))
+            
+            # Try each variation
+            for search_term in search_variations:
+                url = "https://nominatim.openstreetmap.org/search"
+                params = {
+                    'q': search_term,
+                    'format': 'json',
+                    'limit': 1,
+                    'addressdetails': 1
+                }
+                headers = {'User-Agent': 'EntityLinker/1.0'}
+            
+                response = requests.get(url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data:
+                        result = data[0]
+                        entity['latitude'] = float(result['lat'])
+                        entity['longitude'] = float(result['lon'])
+                        entity['location_name'] = result['display_name']
+                        entity['geocoding_source'] = 'openstreetmap_contextual' if geographical_context else 'openstreetmap'
+                        entity['search_term_used'] = search_term
+                        if geographical_context:
+                            entity['llm_geographical_context'] = geographical_context
+                        return True
+            
+                time.sleep(0.3)  # Rate limiting
         
-            response = requests.get(url, params=params, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    result = data[0]
-                    entity['latitude'] = float(result['lat'])
-                    entity['longitude'] = float(result['lon'])
-                    entity['location_name'] = result['display_name']
-                    entity['geocoding_source'] = 'openstreetmap'
-                    return True
-        
-            time.sleep(0.3)  # Rate limiting
         except Exception as e:
             pass
         
@@ -1347,40 +1377,58 @@ Response (geographical context only):"""
         return entities
 
     def link_to_openstreetmap(self, entities):
-        """Add OpenStreetMap links to addresses."""
+        """Add OpenStreetMap links to addresses with geographical context."""
         for entity in entities:
             # Only process ADDRESS entities
             if entity['type'] != 'ADDRESS':
                 continue
                 
             try:
-                # Search OpenStreetMap Nominatim for the address
-                url = "https://nominatim.openstreetmap.org/search"
-                params = {
-                    'q': entity['text'],
-                    'format': 'json',
-                    'limit': 1,
-                    'addressdetails': 1
-                }
-                headers = {'User-Agent': 'EntityLinker/1.0'}
+                # Use geographical context if available
+                geographical_context = entity.get('llm_geographical_context', '')
                 
-                response = requests.get(url, params=params, headers=headers, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        result = data[0]
-                        # Create OpenStreetMap link
-                        lat = result['lat']
-                        lon = result['lon']
-                        entity['openstreetmap_url'] = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=18"
-                        entity['openstreetmap_display_name'] = result['display_name']
-                        
-                        # Also add coordinates
-                        entity['latitude'] = float(lat)
-                        entity['longitude'] = float(lon)
-                        entity['location_name'] = result['display_name']
+                # Create context-aware search terms
+                search_variations = [entity['text']]
+                if geographical_context:
+                    search_variations.append(f"{entity['text']}, {geographical_context}")
                 
-                time.sleep(0.2)  # Rate limiting
+                # Remove duplicates
+                search_variations = list(dict.fromkeys(search_variations))
+                
+                # Try each variation
+                for search_term in search_variations:
+                    # Search OpenStreetMap Nominatim for the address
+                    url = "https://nominatim.openstreetmap.org/search"
+                    params = {
+                        'q': search_term,
+                        'format': 'json',
+                        'limit': 1,
+                        'addressdetails': 1
+                    }
+                    headers = {'User-Agent': 'EntityLinker/1.0'}
+                    
+                    response = requests.get(url, params=params, headers=headers, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data:
+                            result = data[0]
+                            # Create OpenStreetMap link
+                            lat = result['lat']
+                            lon = result['lon']
+                            entity['openstreetmap_url'] = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=18"
+                            entity['openstreetmap_display_name'] = result['display_name']
+                            
+                            # Also add coordinates
+                            entity['latitude'] = float(lat)
+                            entity['longitude'] = float(lon)
+                            entity['location_name'] = result['display_name']
+                            entity['search_term_used'] = search_term
+                            if geographical_context:
+                                entity['llm_geographical_context'] = geographical_context
+                            break  # Success, stop trying variations
+                    
+                    time.sleep(0.2)  # Rate limiting
+                
             except Exception:
                 pass
         
