@@ -677,11 +677,14 @@ Brief reasoning: Why this choice fits the historical context?
         return indicators
 
     def link_to_wikipedia_with_llm_disambiguation(self, entities, full_text):
-        """Use LLM to help disambiguate Wikipedia results based on context."""
+        """Use LLM to help disambiguate Wikipedia results based on context - LAST RESORT only."""
         
         for entity in entities:
-            if entity.get('wikidata_url') or entity.get('wikipedia_url'):
-                continue  # Skip if already linked
+            # Skip if already has higher priority links (Wikidata, Getty AAT, or Britannica)
+            if (entity.get('wikidata_url') or 
+                entity.get('getty_aat_url') or 
+                entity.get('britannica_url')):
+                continue
                 
             try:
                 # Get multiple Wikipedia candidates
@@ -994,11 +997,78 @@ Brief reasoning: Why this choice fits the historical context?
         # Return the most relevant context clues (limit to avoid over-constraining)
         return context_clues[:3]
 
-    def link_to_britannica(self, entities):
-        """Add basic Britannica linking.""" 
+    def link_to_getty_aat(self, entities):
+        """Add Getty Art & Architecture Thesaurus linking - especially good for PRODUCT, FACILITY, WORK_OF_ART entities."""
         for entity in entities:
-            # Skip if already has Wikidata or Wikipedia link
-            if entity.get('wikidata_url') or entity.get('wikipedia_url'):
+            # Skip if already has higher priority links
+            if entity.get('wikidata_url'):
+                continue
+                
+            # Getty AAT is particularly valuable for these entity types
+            relevant_types = ['PRODUCT', 'FACILITY', 'WORK_OF_ART', 'EVENT', 'ORGANIZATION']
+            if entity['type'] not in relevant_types:
+                continue
+                
+            try:
+                # Getty AAT SPARQL endpoint
+                query = f"""
+                PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+                PREFIX gvp: <http://vocab.getty.edu/ontology#>
+                
+                SELECT ?concept ?prefLabel ?note WHERE {{
+                  ?concept skos:inScheme <http://vocab.getty.edu/aat/> ;
+                           skos:prefLabel ?prefLabel ;
+                           gvp:prefLabelGVP/gvp:term ?term .
+                  OPTIONAL {{ ?concept skos:scopeNote/rdf:value ?note }}
+                  FILTER(CONTAINS(LCASE(?term), LCASE("{entity['text']}")))
+                }}
+                LIMIT 3
+                """
+                
+                headers = {
+                    'Accept': 'application/sparql-results+json',
+                    'User-Agent': 'EntityLinker/1.0'
+                }
+                
+                sparql_endpoint = "http://vocab.getty.edu/sparql"
+                response = requests.get(sparql_endpoint, 
+                                      params={'query': query}, 
+                                      headers=headers, 
+                                      timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get('results', {}).get('bindings', [])
+                    
+                    if results:
+                        # Take the first result
+                        result = results[0]
+                        concept_uri = result['concept']['value']
+                        pref_label = result['prefLabel']['value']
+                        
+                        # Convert to web URL
+                        getty_url = concept_uri.replace('http://vocab.getty.edu/aat/', 
+                                                      'http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid=')
+                        
+                        entity['getty_aat_url'] = getty_url
+                        entity['getty_aat_label'] = pref_label
+                        
+                        if 'note' in result:
+                            entity['getty_aat_description'] = result['note']['value'][:200]
+                
+                time.sleep(0.3)  # Rate limiting for Getty
+                
+            except Exception as e:
+                # Getty AAT can be unreliable, continue silently
+                pass
+        
+        return entities
+
+    def link_to_britannica(self, entities):
+        """Add basic Britannica linking - only for entities without higher priority links.""" 
+        for entity in entities:
+            # Skip if already has Wikidata or Getty AAT link
+            if entity.get('wikidata_url') or entity.get('getty_aat_url'):
                 continue
                 
             try:
@@ -1184,7 +1254,7 @@ class StreamlitLLMEntityLinker:
         """Render the sidebar with information about LLM disambiguation."""
         # Entity linking information
         st.sidebar.subheader("Smart Entity Linking")
-        st.sidebar.info("Entities are extracted using Gemini LLM and linked intelligently using context-aware disambiguation. The LLM analyzes multiple candidates and picks the best match based on historical, geographical, and subject matter context.")
+        st.sidebar.info("Entities are linked with priority hierarchy: 1) Wikidata (authoritative structured data), 2) Getty AAT (art & architecture terminology), 3) Britannica (scholarly encyclopedia), 4) Wikipedia (general reference). The LLM provides intelligent disambiguation for the final step.")
         
         st.sidebar.subheader("Geocoding")
         st.sidebar.info("Places and addresses are geocoded using multiple services with contextual hints for accurate coordinates.")
@@ -1280,28 +1350,33 @@ class StreamlitLLMEntityLinker:
                     st.warning("No entities found in the text.")
                     return
                 
-                # Step 3: Link to Wikidata (cached)
+                # Step 3: Link to Wikidata (cached) - FIRST PRIORITY
                 status_text.text("Linking to Wikidata...")
-                progress_bar.progress(45)
+                progress_bar.progress(40)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_wikidata(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 4: NEW - LLM-powered Wikipedia disambiguation
-                status_text.text("Smart Wikipedia linking with LLM disambiguation...")
-                progress_bar.progress(65)
-                entities = self.entity_linker.link_to_wikipedia_with_llm_disambiguation(entities, text)
+                # Step 4: Link to Getty AAT - SECOND PRIORITY
+                status_text.text("Linking to Getty Art & Architecture Thesaurus...")
+                progress_bar.progress(50)
+                entities = self.entity_linker.link_to_getty_aat(entities)
                 
-                # Step 5: Link to Britannica (cached) - for entities without Wikipedia links
+                # Step 5: Link to Britannica - THIRD PRIORITY
                 status_text.text("Linking to Britannica...")
-                progress_bar.progress(75)
+                progress_bar.progress(60)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_britannica(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 6: Get coordinates
+                # Step 6: LLM-powered Wikipedia disambiguation - LAST RESORT
+                status_text.text("Smart Wikipedia linking with LLM disambiguation...")
+                progress_bar.progress(70)
+                entities = self.entity_linker.link_to_wikipedia_with_llm_disambiguation(entities, text)
+                
+                # Step 7: Get coordinates
                 status_text.text("Getting coordinates...")
-                progress_bar.progress(85)
+                progress_bar.progress(80)
                 # Geocode all place entities more aggressively
                 place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION']]
                 
@@ -1323,12 +1398,12 @@ class StreamlitLLMEntityLinker:
                         st.warning(f"Some geocoding failed: {e}")
                         # Continue with processing even if geocoding fails
                 
-                # Step 7: Link addresses to OpenStreetMap
+                # Step 8: Link addresses to OpenStreetMap
                 status_text.text("Linking addresses to OpenStreetMap...")
                 progress_bar.progress(90)
                 entities = self.entity_linker.link_to_openstreetmap(entities)
                 
-                # Step 8: Generate visualisation
+                # Step 9: Generate visualisation
                 status_text.text("Generating visualisation...")
                 progress_bar.progress(100)
                 html_content = self.create_highlighted_html(text, entities)
@@ -1459,6 +1534,12 @@ class StreamlitLLMEntityLinker:
                 if entity.get('wikidata_description'):
                     desc = entity['wikidata_description'][:100]  # Limit description length
                     tooltip_parts.append(f"Description: {desc}")
+                elif entity.get('getty_aat_description'):
+                    desc = entity['getty_aat_description'][:100]
+                    tooltip_parts.append(f"Getty AAT: {desc}")
+                elif entity.get('wikipedia_description'):
+                    desc = entity['wikipedia_description'][:100]
+                    tooltip_parts.append(f"Description: {desc}")
                 if entity.get('location_name'):
                     loc = entity['location_name'][:100]  # Limit location length
                     tooltip_parts.append(f"Location: {loc}")
@@ -1467,9 +1548,10 @@ class StreamlitLLMEntityLinker:
                 
                 tooltip = html_module.escape(" | ".join(tooltip_parts))
                 
-                url = (entity.get('wikipedia_url') or
-                      entity.get('wikidata_url') or
+                url = (entity.get('wikidata_url') or
+                      entity.get('getty_aat_url') or
                       entity.get('britannica_url') or
+                      entity.get('wikipedia_url') or
                       entity.get('openstreetmap_url'))
                 
                 if url:
@@ -1548,10 +1630,12 @@ class StreamlitLLMEntityLinker:
             
             if entity.get('wikidata_description'):
                 row['Description'] = entity['wikidata_description']
-            elif entity.get('wikipedia_description'):
-                row['Description'] = entity['wikipedia_description']
+            elif entity.get('getty_aat_description'):
+                row['Description'] = entity['getty_aat_description']
             elif entity.get('britannica_title'):
                 row['Description'] = entity['britannica_title']
+            elif entity.get('wikipedia_description'):
+                row['Description'] = entity['wikipedia_description']
             
             if entity.get('latitude'):
                 row['Coordinates'] = f"{entity['latitude']:.4f}, {entity['longitude']:.4f}"
@@ -1572,14 +1656,16 @@ class StreamlitLLMEntityLinker:
         st.dataframe(df, use_container_width=True)
 
     def format_entity_links(self, entity: Dict[str, Any]) -> str:
-        """Format entity links for display in table - same as NLTK app."""
+        """Format entity links for display in table - updated priority order."""
         links = []
-        if entity.get('wikipedia_url'):
-            links.append("Wikipedia")
         if entity.get('wikidata_url'):
             links.append("Wikidata")
+        if entity.get('getty_aat_url'):
+            links.append("Getty AAT")
         if entity.get('britannica_url'):
             links.append("Britannica")
+        if entity.get('wikipedia_url'):
+            links.append("Wikipedia")
         if entity.get('openstreetmap_url'):
             links.append("OpenStreetMap")
         return " | ".join(links) if links else "No links"
@@ -1621,10 +1707,12 @@ class StreamlitLLMEntityLinker:
                 
                 if entity.get('wikidata_description'):
                     entity_data['description'] = entity['wikidata_description']
-                elif entity.get('wikipedia_description'):
-                    entity_data['description'] = entity['wikipedia_description']
+                elif entity.get('getty_aat_description'):
+                    entity_data['description'] = entity['getty_aat_description']
                 elif entity.get('britannica_title'):
                     entity_data['description'] = entity['britannica_title']
+                elif entity.get('wikipedia_description'):
+                    entity_data['description'] = entity['wikipedia_description']
                 
                 if entity.get('latitude') and entity.get('longitude'):
                     entity_data['geo'] = {
@@ -1635,14 +1723,14 @@ class StreamlitLLMEntityLinker:
                     if entity.get('location_name'):
                         entity_data['geo']['name'] = entity['location_name']
                 
-                if entity.get('wikipedia_url'):
+                if entity.get('getty_aat_url'):
                     if 'sameAs' in entity_data:
                         if isinstance(entity_data['sameAs'], str):
-                            entity_data['sameAs'] = [entity_data['sameAs'], entity['wikipedia_url']]
+                            entity_data['sameAs'] = [entity_data['sameAs'], entity['getty_aat_url']]
                         else:
-                            entity_data['sameAs'].append(entity['wikipedia_url'])
+                            entity_data['sameAs'].append(entity['getty_aat_url'])
                     else:
-                        entity_data['sameAs'] = entity['wikipedia_url']
+                        entity_data['sameAs'] = entity['getty_aat_url']
                 
                 if entity.get('britannica_url'):
                     if 'sameAs' in entity_data:
@@ -1652,6 +1740,15 @@ class StreamlitLLMEntityLinker:
                             entity_data['sameAs'].append(entity['britannica_url'])
                     else:
                         entity_data['sameAs'] = entity['britannica_url']
+                
+                if entity.get('wikipedia_url'):
+                    if 'sameAs' in entity_data:
+                        if isinstance(entity_data['sameAs'], str):
+                            entity_data['sameAs'] = [entity_data['sameAs'], entity['wikipedia_url']]
+                        else:
+                            entity_data['sameAs'].append(entity['wikipedia_url'])
+                    else:
+                        entity_data['sameAs'] = entity['wikipedia_url']
                 
                 if entity.get('openstreetmap_url'):
                     if 'sameAs' in entity_data:
