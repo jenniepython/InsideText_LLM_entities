@@ -505,39 +505,52 @@ Output (JSON array only):
             if not api_key:
                 return candidates[0]  # Fallback to first result
             
-            # Prepare context snippet around the entity
-            start = max(0, entity['start'] - 150)
-            end = min(len(full_text), entity['end'] + 150)
+            # Get broader context snippet around the entity
+            start = max(0, entity['start'] - 200)
+            end = min(len(full_text), entity['end'] + 200)
             context = full_text[start:end]
+            
+            # Analyze the broader text for historical/cultural markers
+            text_indicators = self._analyze_text_for_disambiguation(full_text)
             
             # Prepare candidates for LLM
             candidates_text = []
             for i, candidate in enumerate(candidates):
-                description = candidate['description'][:300]  # Limit description length
+                description = candidate['description'][:400]  # More description for better analysis
                 candidates_text.append(
                     f"{i+1}. {candidate['title']}: {description}"
                 )
             
-            prompt = f"""You are helping disambiguate a Wikipedia link. Given the context and entity, pick the BEST match.
+            # Enhanced prompt with specific historical context awareness
+            prompt = f"""You are an expert historian helping disambiguate a Wikipedia link. You must consider the HISTORICAL CONTEXT carefully.
 
 ENTITY: "{entity['text']}" (Type: {entity['type']})
 
-CONTEXT: "...{context}..."
+LOCAL CONTEXT: "...{context}..."
+
+TEXT ANALYSIS: {text_indicators}
 
 CANDIDATES:
 {chr(10).join(candidates_text)}
 
-Which candidate (1-{len(candidates)}) is the BEST match for this entity in this context?
+CRITICAL DISAMBIGUATION RULES:
+1. If the text contains ancient/historical references (Persian, Phoenician, Egyptian, mythological names), ALWAYS prefer ancient/historical/mythological entities over modern ones
+2. "Hellas" in ancient context = ancient Greece, NOT modern football clubs or companies
+3. Names like "Inachus" in mythological context = mythological figures (gods, kings, river gods), NOT just geographical features
+4. Ancient place names should link to their historical significance, not modern equivalents
+5. If text mentions "Persian learned men", "Phoenicians", "Egyptian merchandise" - this is ANCIENT HISTORICAL CONTEXT
+
+SPECIFIC ENTITY GUIDANCE:
+- "Hellas" with ancient Greek context → Ancient Greece/Classical Greece
+- "Inachus" with mythology/royal context → Mythological king/river god of Argos
+- "Argos" with ancient context → Ancient Greek city-state
+- Ancient peoples (Phoenicians, Persians) → Historical civilizations
+
+Which candidate (1-{len(candidates)}) is the BEST match for this entity in this HISTORICAL context?
 If NONE are good matches, respond with "NONE".
 
-Consider:
-- Historical vs modern context
-- Geographic relevance
-- Subject matter alignment
-- Entity type appropriateness
-
 Response format: Just the number (1-{len(candidates)}) or "NONE"
-Brief reasoning: Why this choice?
+Brief reasoning: Why this choice fits the historical context?
 """
 
             genai.configure(api_key=api_key)
@@ -557,18 +570,49 @@ Brief reasoning: Why this choice?
                 if 0 <= choice < len(candidates):
                     return candidates[choice]
             
-            # If we can't parse the response, use some heuristics
+            # Enhanced fallback heuristics for historical context
             entity_context = entity.get('context', {})
+            entity_text_lower = entity['text'].lower()
             
-            # For ancient/historical contexts, prefer results with historical keywords
-            if entity_context.get('period') == 'ancient':
+            # Special handling for known historical entities
+            if entity_text_lower == 'hellas' and text_indicators.get('ancient_context'):
+                # Look for ancient Greece specifically
+                for candidate in candidates:
+                    title_lower = candidate['title'].lower()
+                    desc_lower = candidate['description'].lower()
+                    if any(term in title_lower or term in desc_lower for term in [
+                        'ancient greece', 'classical greece', 'greek civilization', 'ancient greek'
+                    ]):
+                        return candidate
+            
+            elif entity_text_lower == 'inachus' and text_indicators.get('mythological_context'):
+                # Look for mythological figure, not just river
                 for candidate in candidates:
                     desc_lower = candidate['description'].lower()
                     if any(term in desc_lower for term in [
-                        'ancient', 'classical', 'mythology', 'mythological', 
-                        'greek', 'roman', 'historical', 'antiquity'
+                        'mythology', 'mythological', 'god', 'king', 'father', 'argos', 'io'
                     ]):
                         return candidate
+            
+            # General ancient context preference
+            if text_indicators.get('ancient_context') or entity_context.get('period') == 'ancient':
+                for candidate in candidates:
+                    desc_lower = candidate['description'].lower()
+                    title_lower = candidate['title'].lower()
+                    
+                    # Strong preference for ancient/historical/mythological
+                    if any(term in desc_lower or term in title_lower for term in [
+                        'ancient', 'classical', 'mythology', 'mythological', 
+                        'greek', 'roman', 'historical', 'antiquity', 'bc', 'bce',
+                        'legendary', 'traditional', 'epic', 'homer'
+                    ]):
+                        # But avoid modern things wrongly tagged
+                        if not any(avoid in desc_lower or avoid in title_lower for avoid in [
+                            'football', 'soccer', 'club', 'team', 'company', 'corporation',
+                            'modern', 'contemporary', '20th century', '21st century',
+                            'founded', 'established', 'fc ', 'f.c.'
+                        ]):
+                            return candidate
             
             # Default fallback
             return candidates[0]
@@ -578,6 +622,59 @@ Brief reasoning: Why this choice?
             
         # Fallback to first candidate
         return candidates[0] if candidates else None
+
+    def _analyze_text_for_disambiguation(self, text: str) -> Dict[str, bool]:
+        """Analyze the full text to provide context clues for disambiguation."""
+        text_lower = text.lower()
+        
+        indicators = {
+            'ancient_context': False,
+            'mythological_context': False,
+            'classical_context': False,
+            'historical_narrative': False
+        }
+        
+        # Check for ancient/historical markers
+        ancient_markers = [
+            'persian learned men', 'phoenicians', 'egyptian', 'assyrian',
+            'ancient', 'antiquity', 'classical', 'mythology', 'mythological',
+            'bc', 'bce', 'herodotus', 'homer', 'came to our seas',
+            'at that time', 'daughter of the king', 'long voyages',
+            'merchandise', 'cargo', 'wares', 'preeminent', 'sailed away'
+        ]
+        
+        if any(marker in text_lower for marker in ancient_markers):
+            indicators['ancient_context'] = True
+        
+        # Check for mythological context
+        mythological_markers = [
+            'according to persians and greeks alike', 'daughter of', 'king',
+            'mythology', 'mythological', 'god', 'goddess', 'deity',
+            'legendary', 'epic', 'traditional story'
+        ]
+        
+        if any(marker in text_lower for marker in mythological_markers):
+            indicators['mythological_context'] = True
+        
+        # Check for classical period
+        classical_markers = [
+            'hellas', 'greek', 'persian', 'phoenician', 'argos',
+            'classical', 'ancient greece', 'ancient greek'
+        ]
+        
+        if any(marker in text_lower for marker in classical_markers):
+            indicators['classical_context'] = True
+        
+        # Check for historical narrative style
+        narrative_markers = [
+            'say that', 'they say', 'according to', 'at that time',
+            'came to', 'sailed', 'settled', 'occupied'
+        ]
+        
+        if any(marker in text_lower for marker in narrative_markers):
+            indicators['historical_narrative'] = True
+        
+        return indicators
 
     def link_to_wikipedia_with_llm_disambiguation(self, entities, full_text):
         """Use LLM to help disambiguate Wikipedia results based on context."""
