@@ -3,10 +3,10 @@
 Streamlit LLM Entity Linker Application
 
 A web interface for entity extraction using LLM (Gemini) with intelligent linking and geocoding.
-This application uses LLM for both entity extraction AND disambiguation of Wikipedia links.
+This application uses LLM for both entity extraction AND intelligent disambiguation throughout.
 
-Author: Enhanced from NER_LLM_entities_streamlit.py
-Version: 3.0 - Added LLM-powered disambiguation
+Author: Enhanced LLM-driven version
+Version: 4.0 - Fully LLM-driven, no hardcoded bias
 """
 
 import streamlit as st
@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed" 
 )
 
-# Add custom CSS for Farrow & Ball Slipper Satin background - same as NLTK app
+# Add custom CSS for Farrow & Ball Slipper Satin background
 st.markdown("""
 <style>
 .stApp {
@@ -78,26 +78,17 @@ import html as html_module
 from typing import List, Dict, Any
 import hashlib
 
-# LLM Model configuration - ONLY Gemini 1.5 Flash
-MODEL_OPTIONS = {
-    "Gemini 1.5 Flash": {
-        "model_name": "gemini-1.5-flash",
-        "description": "Google's lightweight LLM for fast generation",
-        "provider": "google"
-    }
-}
-
 class LLMEntityLinker:
     """
     Main class for LLM-based entity linking functionality.
     
     This class uses Gemini for entity extraction AND intelligent disambiguation
-    of Wikipedia links based on context.
+    throughout the entire pipeline - no hardcoded bias.
     """
     
     def __init__(self):
         """Initialize the LLM Entity Linker."""
-        # Color scheme for different entity types in HTML output - expanded for more entity types (removed QUANTITY)
+        # Color scheme for different entity types in HTML output
         self.colors = {
             'PERSON': '#BF7B69',          # F&B Red earth        
             'ORGANIZATION': '#9fd2cd',    # F&B Blue ground
@@ -114,152 +105,6 @@ class LLMEntityLinker:
             'DATE': '#E3DDD7',          # F&B Dimity
             'MONEY': '#D6CFCA'          # F&B Joa's white
         }
-
-    def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
-        """Construct a context-aware NER prompt that works for any text."""
-        
-        # analyse context if not provided
-        if context is None:
-            context = self.analyse_text_context(text)
-        
-        # Create dynamic context instructions based on detected patterns
-        context_instructions = ""
-        
-        # Add period-based instructions
-        if context.get('period') == 'ancient':
-            context_instructions += """
-ANCIENT/HISTORICAL CONTEXT DETECTED:
-- Place names in historical contexts = ancient locations (GPE), not modern companies
-- Ancient peoples (like Phoenicians, Romans, etc.) = civilizations (ORGANIZATION)
-- If people "came to", "sailed to", "traveled to" a place → that place is GPE/LOCATION
-- Names ending in -us, -os, -es often = ancient people or places
-- Kings, emperors, pharaohs = historical figures (PERSON)
-"""
-        elif context.get('period') in ['medieval', 'victorian']:
-            context_instructions += f"""
-{context.get('period').upper()} PERIOD CONTEXT DETECTED:
-- Historical building names = period facilities (FACILITY)
-- Technical/architectural terms = historical products/features (PRODUCT)
-- Period-appropriate interpretation of ambiguous names
-"""
-        
-        # Add subject matter instructions
-        if context.get('subject_matter') == 'theater':
-            context_instructions += """
-THEATER CONTEXT DETECTED:
-- Stage terminology (mezzanine, proscenium, trap, etc.) = technical features (PRODUCT)
-- Theater names = performance venues (FACILITY) 
-- Play titles = works of art (WORK_OF_ART)
-- Performers, directors = people (PERSON)
-"""
-        elif context.get('subject_matter') == 'architecture':
-            context_instructions += """
-ARCHITECTURE CONTEXT DETECTED:
-- Building components, materials = architectural products (PRODUCT)
-- Architectural styles, periods = historical context
-- Building names = facilities (FACILITY)
-"""
-        elif context.get('subject_matter') == 'literature':
-            context_instructions += """
-LITERATURE CONTEXT DETECTED:
-- Book titles, manuscript names = works of art (WORK_OF_ART)
-- Authors, poets, writers = people (PERSON)
-- Literary characters = people (PERSON) if clearly fictional
-"""
-        
-        # Add geographical context
-        if context.get('region'):
-            region_name = context['region'].replace('_', ' ').title()
-            context_instructions += f"""
-GEOGRAPHICAL CONTEXT: {region_name}
-- Interpret place names in appropriate regional/cultural context
-- Historical places should link to period-appropriate entries
-"""
-        
-        # Dynamic examples based on detected context
-        examples = """
-Examples:
-
-Text: "The merchants sailed from their homeland to the great city, bringing goods to trade with the local rulers."
-Context: Historical/ancient context detected
-Output:
-[
-    {"text": "merchants", "type": "PERSON", "start_pos": 4},
-    {"text": "homeland", "type": "LOCATION", "start_pos": 27},
-    {"text": "great city", "type": "GPE", "start_pos": 44},
-    {"text": "rulers", "type": "PERSON", "start_pos": 97}
-]
-
-Text: "The theater's main stage featured a revolving platform and hydraulic lifts for scene changes."
-Context: Theater context detected
-Output:
-[
-    {"text": "theater", "type": "FACILITY", "start_pos": 4},
-    {"text": "main stage", "type": "PRODUCT", "start_pos": 14},
-    {"text": "revolving platform", "type": "PRODUCT", "start_pos": 35},
-    {"text": "hydraulic lifts", "type": "PRODUCT", "start_pos": 58}
-]
-
-Text: "The manuscript contains poems written by the court poet during the reign of King Edward."
-Context: Literature/historical context detected
-Output:
-[
-    {"text": "manuscript", "type": "WORK_OF_ART", "start_pos": 4},
-    {"text": "poems", "type": "WORK_OF_ART", "start_pos": 24},
-    {"text": "court poet", "type": "PERSON", "start_pos": 45},
-    {"text": "King Edward", "type": "PERSON", "start_pos": 75}
-]
-"""
-        
-        prompt = f"""You are an expert named entity recognition system that adapts to different text types and contexts. Your task is to identify and extract ALL relevant entities while interpreting them correctly based on context.
-
-{context_instructions}
-
-CORE CONTEXTUAL RULES (apply to ANY text):
-1. If people "went to", "came to", "sailed to", "traveled to" a place → that place is GPE/LOCATION
-2. In historical contexts, interpret names as historical entities, not modern companies
-3. Technical terms related to the subject matter = PRODUCT (tools, components, features)
-4. Titles of creative works = WORK_OF_ART
-5. Names of buildings, venues, institutions = FACILITY
-6. Groups of people, civilizations, organizations = ORGANIZATION
-7. Individual people, historical figures, characters = PERSON
-8. IMPORTANT: Adjectives and demonyms (Egyptian, Persian, Greek, Roman, etc.) when used as modifiers (e.g., "Egyptian merchandise", "Persian learned men") should NOT be tagged as entities. Only tag them when they refer to the people as a group (e.g., "The Egyptians built pyramids")
-9. Only extract proper nouns and named entities, not common descriptive adjectives
-
-ENTITY TYPES:
-- PERSON: Individual people, historical figures, characters, roles with names (e.g., "Io", "Inachus", NOT "daughter" or "king" without names)
-- ORGANIZATION: Named groups, institutions, civilizations, companies, teams (e.g., "Phoenicians" as a people, NOT "Egyptian" as an adjective)
-- GPE: Cities, countries, regions, kingdoms, territories, political entities (e.g., "Egypt", "Argos", "Hellas")
-- LOCATION: Geographic places, landmarks, natural features (e.g., "Red Sea", specific named locations)
-- FACILITY: Buildings, venues, structures, stages, theaters
-- ADDRESS: Street addresses, property descriptions
-- PRODUCT: Objects, tools, components, materials, technical features (NOT "merchandise" or "cargo" unless specifically named)
-- EVENT: Named events, ceremonies, performances, battles
-- WORK_OF_ART: Books, plays, poems, manuscripts, artworks
-- LANGUAGE: Languages, dialects, scripts
-- LAW: Legal documents, laws, regulations
-- DATE: Specific dates, periods, years, eras, reigns
-- MONEY: Currencies, amounts, prices
-
-CRITICAL RULES FOR HISTORICAL TEXTS:
-- "Phoenicians", "Persians", "Greeks", "Egyptians" = ORGANIZATION only when referring to the people as a group
-- "Egyptian merchandise", "Persian learned men", "Greek ships" = DO NOT tag the adjectives
-- Place names like "Egypt", "Persia", "Greece", "Argos" = GPE
-- Named individuals like "Io", "Inachus" = PERSON
-- Unnamed roles like "the king", "the daughter" without names = DO NOT tag
-- "Red Sea" or similar named bodies of water = LOCATION
-
-{examples}
-
-Now extract entities from this text, using context clues to determine correct interpretations:
-
-Text: "{text}"
-
-Remember: Only extract clear named entities. Avoid tagging adjectives, demonyms when used as modifiers, or generic terms.
-
-Output (JSON array only):
-"""
-        return prompt
 
     def extract_json_from_response(self, response_text):
         """Extract JSON from LLM response with improved parsing."""
@@ -303,6 +148,169 @@ Output (JSON array only):
                     continue
         
         return None
+
+    def analyse_text_context(self, text: str) -> Dict[str, Any]:
+        """Analyse text to determine historical, geographical, and cultural context using LLM intelligence."""
+        try:
+            import google.generativeai as genai
+            
+            # Check for API key
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                # Fallback to basic structure if no API key
+                return self._basic_context_fallback()
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            # Let the LLM analyze the context without any hardcoded assumptions
+            prompt = f"""Analyze this text to determine its context for entity disambiguation purposes.
+
+TEXT: "{text[:1500]}..."
+
+Provide a comprehensive analysis covering:
+
+1. HISTORICAL PERIOD: What time period does this text reference? (ancient, medieval, renaissance, industrial, modern, contemporary, or specific periods like "Tang Dynasty", "Meiji era", etc.)
+
+2. GEOGRAPHICAL REGION: What geographical/cultural region is the primary focus? (Mediterranean, Europe, Asia, Africa, Americas, Middle East, or specific regions)
+
+3. CULTURAL CONTEXT: What specific culture/civilization is discussed? (Greek, Roman, Chinese, Islamic, Byzantine, Maya, etc.)
+
+4. SUBJECT MATTER: What is the main topic? (history, literature, architecture, theater, military, politics, religion, science, art, etc.)
+
+5. LANGUAGE STYLE: What writing style is used? (academic, narrative, archaic, contemporary, journalistic, literary, etc.)
+
+6. SPECIFIC INDICATORS: What specific words, phrases, or concepts indicate this context?
+
+Respond in this EXACT JSON format:
+{{
+    "period": "detected_period_or_null",
+    "region": "detected_region_or_null", 
+    "culture": "detected_culture_or_null",
+    "subject_matter": "detected_subject_or_null",
+    "language_style": "detected_style_or_modern",
+    "time_indicators": ["list", "of", "temporal", "clues"],
+    "place_indicators": ["list", "of", "geographical", "clues"],
+    "subject_indicators": ["list", "of", "topical", "clues"],
+    "confidence": "high|medium|low",
+    "reasoning": "brief explanation of analysis"
+}}
+
+Focus on being accurate and unbiased. If uncertain about any aspect, use null or indicate low confidence.
+"""
+            
+            response = model.generate_content(prompt)
+            llm_response = response.text.strip()
+            
+            # Parse the LLM's context analysis
+            context_data = self.extract_json_from_response(llm_response)
+            
+            if context_data and isinstance(context_data, list) and len(context_data) > 0:
+                context = context_data[0]
+            elif context_data and isinstance(context_data, dict):
+                context = context_data
+            else:
+                # If LLM response parsing fails, return basic structure
+                return self._basic_context_fallback()
+            
+            # Ensure all required keys exist with defaults
+            return {
+                'period': context.get('period'),
+                'region': context.get('region'),
+                'culture': context.get('culture'),
+                'subject_matter': context.get('subject_matter'),
+                'language_style': context.get('language_style', 'modern'),
+                'time_indicators': context.get('time_indicators', []),
+                'place_indicators': context.get('place_indicators', []),
+                'subject_indicators': context.get('subject_indicators', []),
+                'confidence': context.get('confidence', 'medium'),
+                'reasoning': context.get('reasoning', 'LLM-based analysis'),
+                'analysis_method': 'llm_driven'
+            }
+            
+        except Exception as e:
+            print(f"LLM context analysis failed: {e}")
+            return self._basic_context_fallback()
+
+    def _basic_context_fallback(self):
+        """Minimal fallback context structure when LLM analysis fails."""
+        return {
+            'period': None,
+            'region': None,
+            'culture': None,
+            'subject_matter': None,
+            'language_style': 'modern',
+            'time_indicators': [],
+            'place_indicators': [],
+            'subject_indicators': [],
+            'confidence': 'low',
+            'reasoning': 'Fallback - LLM analysis unavailable',
+            'analysis_method': 'fallback'
+        }
+
+    def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
+        """Construct a context-aware NER prompt that adapts to detected context."""
+        
+        # Analyse context if not provided
+        if context is None:
+            context = self.analyse_text_context(text)
+        
+        # Create dynamic context instructions based on LLM-detected patterns
+        context_instructions = ""
+        
+        if context.get('period'):
+            context_instructions += f"\nDETECTED PERIOD: {context['period']}\n"
+            if context['period'] in ['ancient', 'classical']:
+                context_instructions += "- Interpret names as historical entities, not modern companies\n"
+                context_instructions += "- Ancient peoples = civilizations (ORGANIZATION)\n"
+                context_instructions += "- Historical figures = PERSON\n"
+        
+        if context.get('region'):
+            context_instructions += f"\nDETECTED REGION: {context['region']}\n"
+            context_instructions += "- Interpret place names in appropriate cultural context\n"
+        
+        if context.get('subject_matter'):
+            context_instructions += f"\nDETECTED SUBJECT: {context['subject_matter']}\n"
+            if context['subject_matter'] == 'theater':
+                context_instructions += "- Theater terminology = technical features (PRODUCT)\n"
+                context_instructions += "- Theater names = performance venues (FACILITY)\n"
+            elif context['subject_matter'] == 'architecture':
+                context_instructions += "- Building components = architectural products (PRODUCT)\n"
+                context_instructions += "- Building names = facilities (FACILITY)\n"
+        
+        prompt = f"""You are an expert named entity recognition system that adapts to different text types and contexts. 
+
+CONTEXT ANALYSIS:
+{context_instructions}
+
+Your task is to identify and extract ALL relevant entities while interpreting them correctly based on the detected context.
+
+ENTITY TYPES:
+- PERSON: Individual people, historical figures, characters, roles with names
+- ORGANIZATION: Named groups, institutions, civilizations, companies, teams
+- GPE: Cities, countries, regions, kingdoms, territories, political entities
+- LOCATION: Geographic places, landmarks, natural features
+- FACILITY: Buildings, venues, structures, stages, theaters
+- ADDRESS: Street addresses, property descriptions
+- PRODUCT: Objects, tools, components, materials, technical features
+- EVENT: Named events, ceremonies, performances, battles
+- WORK_OF_ART: Books, plays, poems, manuscripts, artworks
+- LANGUAGE: Languages, dialects, scripts
+- LAW: Legal documents, laws, regulations
+- DATE: Specific dates, periods, years, eras, reigns
+- MONEY: Currencies, amounts, prices
+
+RULES:
+1. Only extract proper nouns and named entities
+2. Avoid tagging adjectives or modifiers unless they refer to people as a group
+3. Consider the detected context when interpreting ambiguous names
+4. Extract entities that are clearly identifiable and meaningful
+
+Text: "{text}"
+
+Output (JSON array only):
+"""
+        return prompt
 
     def extract_entities(self, text: str):
         """Extract named entities from text using Gemini LLM with context awareness."""
@@ -370,104 +378,375 @@ Output (JSON array only):
             st.error(f"Error in LLM entity extraction: {e}")
             return []
 
-    def analyse_text_context(self, text: str) -> Dict[str, Any]:
-        """Analyse text to determine historical, geographical, and cultural context using LLM intelligence."""
+    def link_to_getty_aat(self, entities):
+        """Add Getty Art & Architecture Thesaurus linking using enhanced search."""
+        for entity in entities:
+            # Getty AAT is particularly valuable for these entity types
+            relevant_types = ['PRODUCT', 'FACILITY', 'WORK_OF_ART', 'EVENT', 'ORGANIZATION']
+            if entity['type'] not in relevant_types:
+                continue
+                
+            try:
+                # Try enhanced Getty AAT search
+                getty_result = self._search_getty_enhanced(entity)
+                
+                if getty_result:
+                    entity['getty_aat_url'] = getty_result['url']
+                    entity['getty_aat_label'] = getty_result['label']
+                    entity['getty_aat_description'] = getty_result['description']
+                    entity['getty_search_term'] = getty_result['search_term']
+                
+                time.sleep(0.5)  # Conservative rate limiting for Getty
+                
+            except Exception as e:
+                print(f"Getty AAT search failed for {entity['text']}: {e}")
+                pass
+        
+        return entities
+
+    def _search_getty_enhanced(self, entity):
+        """Enhanced Getty AAT search with multiple fallback methods."""
+        search_terms = [entity['text']]
+        
+        # Add variations
+        text_lower = entity['text'].lower()
+        if text_lower.endswith('s') and len(entity['text']) > 3:
+            search_terms.append(entity['text'][:-1])  # Remove 's'
+        elif not text_lower.endswith('s'):
+            search_terms.append(entity['text'] + 's')  # Add 's'
+        
+        # Try each search term
+        for search_term in search_terms[:3]:
+            result = self._try_getty_sparql(search_term)
+            if result:
+                return result
+            
+            result = self._try_getty_web_search(search_term)
+            if result:
+                return result
+        
+        return None
+
+    def _try_getty_sparql(self, search_term):
+        """Try Getty AAT SPARQL endpoint."""
+        try:
+            search_url = "http://vocab.getty.edu/sparql.json"
+            
+            query = f"""
+            PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+            PREFIX gvp: <http://vocab.getty.edu/ontology#>
+            PREFIX xl: <http://www.w3.org/2008/05/skos-xl#>
+            
+            SELECT ?subject ?term ?note WHERE {{
+              ?subject skos:inScheme <http://vocab.getty.edu/aat/> ;
+                       gvp:prefLabelGVP/xl:literalForm ?term ;
+                       skos:scopeNote ?noteObj .
+              ?noteObj rdf:value ?note .
+              FILTER(CONTAINS(LCASE(?term), LCASE("{search_term}")))
+            }}
+            LIMIT 3
+            """
+            
+            headers = {
+                'Accept': 'application/sparql-results+json',
+                'User-Agent': 'EntityLinker/1.0'
+            }
+            
+            response = requests.get(search_url, params={'query': query}, 
+                                  headers=headers, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('results', {}).get('bindings', [])
+                
+                if results:
+                    result = results[0]
+                    subject_uri = result['subject']['value']
+                    term = result['term']['value']
+                    note = result.get('note', {}).get('value', '')
+                    
+                    aat_id = subject_uri.split('/')[-1]
+                    web_url = f"http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid={aat_id}"
+                    
+                    return {
+                        'url': web_url,
+                        'label': term,
+                        'description': note[:200] if note else f"Getty AAT entry for {term}",
+                        'search_term': search_term
+                    }
+                    
+        except Exception as e:
+            print(f"Getty SPARQL failed for '{search_term}': {e}")
+            
+        return None
+
+    def _try_getty_web_search(self, search_term):
+        """Try Getty AAT web interface search."""
+        try:
+            search_url = "http://www.getty.edu/vow/AATServlet"
+            params = {
+                'english': 'N',
+                'find': search_term,
+                'logic': 'AND',
+                'note': '',
+                'page': '1'
+            }
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(search_url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                aat_pattern = r'AATFullDisplay\?[^"]*subjectid=(\d+)[^"]*"[^>]*>([^<]+)</a>'
+                matches = re.findall(aat_pattern, response.text)
+                
+                if matches:
+                    aat_id, label = matches[0]
+                    web_url = f"http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid={aat_id}"
+                    
+                    return {
+                        'url': web_url,
+                        'label': label.strip(),
+                        'description': f"Getty AAT cultural/architectural term: {label.strip()}",
+                        'search_term': search_term
+                    }
+                    
+        except Exception as e:
+            print(f"Getty web search failed for '{search_term}': {e}")
+        
+        return None
+
+    def link_to_wikidata(self, entities):
+        """Add context-aware Wikidata linking using LLM intelligence."""
+        for entity in entities:
+            # Skip if already has Getty AAT link (higher priority)
+            if entity.get('getty_aat_url'):
+                continue
+                
+            try:
+                # Use LLM to create intelligent Wikidata search queries
+                search_queries = self._create_wikidata_search_queries(entity)
+                
+                # Try each LLM-generated query
+                for search_query in search_queries:
+                    wikidata_result = self._search_wikidata(search_query, entity)
+                    if wikidata_result:
+                        entity.update(wikidata_result)
+                        break
+                
+                time.sleep(0.1)  # Rate limiting
+                
+            except Exception as e:
+                print(f"Wikidata linking failed for {entity['text']}: {e}")
+            
+        return entities
+
+    def _create_wikidata_search_queries(self, entity):
+        """Use LLM to create intelligent Wikidata search queries."""
         try:
             import google.generativeai as genai
             
-            # Check for API key
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                # Fallback to basic structure if no API key
-                return self._basic_context_fallback()
+                return [entity['text']]  # Fallback to basic search
             
+            entity_context = entity.get('context', {})
+            
+            prompt = f"""Create optimized Wikidata search queries for this entity.
+
+ENTITY: "{entity['text']}" (Type: {entity['type']})
+
+CONTEXT:
+- Period: {entity_context.get('period', 'unknown')}
+- Region: {entity_context.get('region', 'unknown')}
+- Culture: {entity_context.get('culture', 'unknown')}
+- Subject: {entity_context.get('subject_matter', 'unknown')}
+
+TASK: Generate 2-3 search queries that would find the correct Wikidata entry for this entity in this context.
+
+CONSIDERATIONS:
+- Add contextual qualifiers to disambiguate
+- Consider alternative names/spellings
+- Include cultural/temporal context where relevant
+- Make queries specific enough to avoid wrong matches
+
+EXAMPLES:
+- "Argos" in ancient Greek context → ["Argos Greece ancient city", "Argos Peloponnese", "Argos archaeological site"]
+- "Io" in mythology context → ["Io Greek mythology", "Io daughter Inachus", "Io mythological figure"]
+- "Paris" in French context → ["Paris France capital", "Paris city France"]
+
+Respond with JSON array of 2-3 search queries:
+["query 1", "query 2", "query 3"]
+"""
+
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # Let the LLM analyze the context without any hardcoded assumptions
-            prompt = f"""Analyze this text to determine its context for entity disambiguation purposes.
-    
-    TEXT: "{text[:1500]}..."
-    
-    Provide a comprehensive analysis covering:
-    
-    1. HISTORICAL PERIOD: What time period does this text reference? (ancient, medieval, renaissance, industrial, modern, contemporary, or specific periods like "Tang Dynasty", "Meiji era", etc.)
-    
-    2. GEOGRAPHICAL REGION: What geographical/cultural region is the primary focus? (Mediterranean, Europe, Asia, Africa, Americas, Middle East, or specific regions)
-    
-    3. CULTURAL CONTEXT: What specific culture/civilization is discussed? (Greek, Roman, Chinese, Islamic, Byzantine, Maya, etc.)
-    
-    4. SUBJECT MATTER: What is the main topic? (history, literature, architecture, theater, military, politics, religion, science, art, etc.)
-    
-    5. LANGUAGE STYLE: What writing style is used? (academic, narrative, archaic, contemporary, journalistic, literary, etc.)
-    
-    6. SPECIFIC INDICATORS: What specific words, phrases, or concepts indicate this context?
-    
-    Respond in this EXACT JSON format:
-    {{
-        "period": "detected_period_or_null",
-        "region": "detected_region_or_null", 
-        "culture": "detected_culture_or_null",
-        "subject_matter": "detected_subject_or_null",
-        "language_style": "detected_style_or_modern",
-        "time_indicators": ["list", "of", "temporal", "clues"],
-        "place_indicators": ["list", "of", "geographical", "clues"],
-        "subject_indicators": ["list", "of", "topical", "clues"],
-        "confidence": "high|medium|low",
-        "reasoning": "brief explanation of analysis"
-    }}
-    
-    Focus on being accurate and unbiased. If uncertain about any aspect, use null or indicate low confidence.
-    """
+            response = model.generate_content(prompt)
+            search_queries = self.extract_json_from_response(response.text)
+            
+            if search_queries and isinstance(search_queries, list):
+                return search_queries
+            
+        except Exception as e:
+            print(f"LLM search query generation failed: {e}")
+        
+        # Fallback to basic query
+        return [entity['text']]
+
+    def _search_wikidata(self, search_query, entity):
+        """Search Wikidata and use LLM to select best match."""
+        try:
+            url = "https://www.wikidata.org/w/api.php"
+            params = {
+                'action': 'wbsearchentities',
+                'format': 'json',
+                'search': search_query,
+                'language': 'en',
+                'limit': 5,
+                'type': 'item'
+            }
+            
+            response = requests.get(url, params=params, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get('search', [])
+                
+                if not results:
+                    return None
+                
+                if len(results) == 1:
+                    # Only one result, use it
+                    result = results[0]
+                    return {
+                        'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                        'wikidata_description': result.get('description', ''),
+                        'wikidata_search_query': search_query
+                    }
+                
+                # Multiple results - use LLM to choose best match
+                return self._llm_select_wikidata_result(entity, results, search_query)
+            
+        except Exception as e:
+            print(f"Wikidata search failed for '{search_query}': {e}")
+        
+        return None
+
+    def _llm_select_wikidata_result(self, entity, results, search_query):
+        """Use LLM to select the best Wikidata result."""
+        try:
+            import google.generativeai as genai
+            
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                # Fallback to first result
+                result = results[0]
+                return {
+                    'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                    'wikidata_description': result.get('description', ''),
+                    'wikidata_search_query': search_query
+                }
+            
+            entity_context = entity.get('context', {})
+            
+            candidates_text = []
+            for i, result in enumerate(results):
+                candidates_text.append(
+                    f"{i+1}. {result.get('label', 'No label')}: {result.get('description', 'No description')}"
+                )
+            
+            prompt = f"""Select the best Wikidata match for this entity.
+
+ENTITY: "{entity['text']}" (Type: {entity['type']})
+SEARCH QUERY USED: "{search_query}"
+
+CONTEXT:
+- Period: {entity_context.get('period', 'unknown')}
+- Region: {entity_context.get('region', 'unknown')}
+- Culture: {entity_context.get('culture', 'unknown')}
+
+WIKIDATA CANDIDATES:
+{chr(10).join(candidates_text)}
+
+Which candidate (1-{len(results)}) best matches this entity in this context?
+If none are appropriate, respond with "NONE".
+
+Response format: Just the number (1-{len(results)}) or "NONE"
+"""
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
             
             response = model.generate_content(prompt)
-            llm_response = response.text.strip()
+            result_text = response.text.strip()
             
-            # Parse the LLM's context analysis
-            context_data = self.extract_json_from_response(llm_response)
+            # Parse LLM response
+            match = re.search(r'(\d+)', result_text)
+            if match:
+                choice = int(match.group(1)) - 1
+                if 0 <= choice < len(results):
+                    result = results[choice]
+                    return {
+                        'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                        'wikidata_description': result.get('description', ''),
+                        'wikidata_search_query': search_query,
+                        'wikidata_selection_method': 'llm_intelligent'
+                    }
             
-            if context_data and isinstance(context_data, list) and len(context_data) > 0:
-                context = context_data[0]
-            elif context_data and isinstance(context_data, dict):
-                context = context_data
-            else:
-                # If LLM response parsing fails, return basic structure
-                return self._basic_context_fallback()
-            
-            # Ensure all required keys exist with defaults
+            # Fallback to first result
+            result = results[0]
             return {
-                'period': context.get('period'),
-                'region': context.get('region'),
-                'culture': context.get('culture'),
-                'subject_matter': context.get('subject_matter'),
-                'language_style': context.get('language_style', 'modern'),
-                'time_indicators': context.get('time_indicators', []),
-                'place_indicators': context.get('place_indicators', []),
-                'subject_indicators': context.get('subject_indicators', []),
-                'confidence': context.get('confidence', 'medium'),
-                'reasoning': context.get('reasoning', 'LLM-based analysis'),
-                'analysis_method': 'llm_driven'
+                'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                'wikidata_description': result.get('description', ''),
+                'wikidata_search_query': search_query,
+                'wikidata_selection_method': 'first_result_fallback'
             }
             
         except Exception as e:
-            print(f"LLM context analysis failed: {e}")
-            return self._basic_context_fallback()
-    
-    def _basic_context_fallback(self):
-        """Minimal fallback context structure when LLM analysis fails."""
-        return {
-            'period': None,
-            'region': None,
-            'culture': None,
-            'subject_matter': None,
-            'language_style': 'modern',
-            'time_indicators': [],
-            'place_indicators': [],
-            'subject_indicators': [],
-            'confidence': 'low',
-            'reasoning': 'Fallback - LLM analysis unavailable',
-            'analysis_method': 'fallback'
-        }
+            print(f"LLM Wikidata selection failed: {e}")
+            # Fallback to first result
+            result = results[0]
+            return {
+                'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                'wikidata_description': result.get('description', ''),
+                'wikidata_search_query': search_query,
+                'wikidata_selection_method': 'error_fallback'
+            }
+
+    def link_to_britannica(self, entities):
+        """Add Britannica linking for entities without higher priority links.""" 
+        for entity in entities:
+            # Skip if already has Getty AAT or Wikidata link
+            if entity.get('getty_aat_url') or entity.get('wikidata_url'):
+                continue
+                
+            try:
+                search_url = "https://www.britannica.com/search"
+                params = {'query': entity['text']}
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                
+                response = requests.get(search_url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    # Look for article links
+                    pattern = r'href="(/topic/[^"]*)"[^>]*>([^<]*)</a>'
+                    matches = re.findall(pattern, response.text)
+                    
+                    for url_path, link_text in matches:
+                        if (entity['text'].lower() in link_text.lower() or 
+                            link_text.lower() in entity['text'].lower()):
+                            entity['britannica_url'] = f"https://www.britannica.com{url_path}"
+                            entity['britannica_title'] = link_text.strip()
+                            break
+                
+                time.sleep(0.3)  # Rate limiting
+            except Exception:
+                pass
+        
+        return entities
 
     def get_wikipedia_candidates(self, entity_text, limit=5):
         """Get multiple Wikipedia candidates for disambiguation - let LLM decide what's relevant."""
@@ -497,7 +776,7 @@ Output (JSON array only):
                         'title': result['title'],
                         'description': clean_snippet,
                         'url': f"https://en.wikipedia.org/wiki/{urllib.parse.quote(result['title'].replace(' ', '_'))}",
-                        'type': self._classify_result_type(result['title'], clean_snippet)  # Optional: help LLM with metadata
+                        'type': self._classify_result_type(result['title'], clean_snippet)
                     })
                 
                 return candidates
@@ -506,9 +785,9 @@ Output (JSON array only):
             print(f"Error getting Wikipedia candidates: {e}")
             
         return []
-    
+
     def _classify_result_type(self, title, snippet):
-        """Optional: Add metadata to help LLM make better decisions."""
+        """Add metadata to help LLM make better decisions."""
         title_lower = title.lower()
         snippet_lower = snippet.lower()
         
@@ -519,45 +798,45 @@ Output (JSON array only):
         else:
             return 'standard_article'
 
-def llm_disambiguate_wikipedia(self, entity, candidates, full_text):
-    """Use Gemini to pick the best Wikipedia match based on context - fully LLM-driven."""
-    
-    if not candidates:
-        return None
+    def llm_disambiguate_wikipedia(self, entity, candidates, full_text):
+        """Use Gemini to pick the best Wikipedia match based on context - fully LLM-driven."""
         
-    if len(candidates) == 1:
-        return candidates[0]
-    
-    try:
-        import google.generativeai as genai
-        
-        # Check for API key
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return candidates[0]  # Fallback to first result
-        
-        # Get entity context from the LLM-driven analysis
-        entity_context = entity.get('context', {})
-        
-        # Get broader context snippet around the entity
-        start = max(0, entity['start'] - 300)
-        end = min(len(full_text), entity['end'] + 300)
-        local_context = full_text[start:end]
-        
-        # Prepare candidates for LLM with clean formatting
-        candidates_text = []
-        for i, candidate in enumerate(candidates):
-            candidate_type = candidate.get('type', 'standard_article')
-            description = candidate['description'][:500]  # More context for better analysis
+        if not candidates:
+            return None
             
-            candidates_text.append(
-                f"{i+1}. Title: {candidate['title']}\n"
-                f"   Type: {candidate_type}\n" 
-                f"   Description: {description}\n"
-            )
+        if len(candidates) == 1:
+            return candidates[0]
         
-        # Clean, unbiased prompt that trusts LLM intelligence
-        prompt = f"""You are an expert at disambiguating Wikipedia links using contextual analysis.
+        try:
+            import google.generativeai as genai
+            
+            # Check for API key
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                return candidates[0]  # Fallback to first result
+            
+            # Get entity context from the LLM-driven analysis
+            entity_context = entity.get('context', {})
+            
+            # Get broader context snippet around the entity
+            start = max(0, entity['start'] - 300)
+            end = min(len(full_text), entity['end'] + 300)
+            local_context = full_text[start:end]
+            
+            # Prepare candidates for LLM with clean formatting
+            candidates_text = []
+            for i, candidate in enumerate(candidates):
+                candidate_type = candidate.get('type', 'standard_article')
+                description = candidate['description'][:500]  # More context for better analysis
+                
+                candidates_text.append(
+                    f"{i+1}. Title: {candidate['title']}\n"
+                    f"   Type: {candidate_type}\n" 
+                    f"   Description: {description}\n"
+                )
+            
+            # Clean, unbiased prompt that trusts LLM intelligence
+            prompt = f"""You are an expert at disambiguating Wikipedia links using contextual analysis.
 
 ENTITY TO DISAMBIGUATE: "{entity['text']}" (Entity Type: {entity['type']})
 
@@ -605,145 +884,92 @@ Confidence: [high/medium/low]
 Reasoning: [your analysis]
 """
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
-        response = model.generate_content(prompt)
-        result = response.text.strip()
-        
-        # Parse the LLM response
-        choice_match = re.search(r'Choice:\s*(\d+|NONE)', result, re.IGNORECASE)
-        confidence_match = re.search(r'Confidence:\s*(high|medium|low)', result, re.IGNORECASE)
-        reasoning_match = re.search(r'Reasoning:\s*(.+?)(?:\n|$)', result, re.IGNORECASE | re.DOTALL)
-        
-        if choice_match:
-            choice_str = choice_match.group(1).upper()
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
             
-            if choice_str == "NONE":
-                return None
+            response = model.generate_content(prompt)
+            result = response.text.strip()
             
-            try:
-                choice = int(choice_str) - 1  # Convert to 0-based index
-                if 0 <= choice < len(candidates):
-                    selected_candidate = candidates[choice]
-                    
-                    # Add disambiguation metadata
-                    selected_candidate['disambiguation_confidence'] = confidence_match.group(1) if confidence_match else 'medium'
-                    selected_candidate['disambiguation_reasoning'] = reasoning_match.group(1).strip() if reasoning_match else 'LLM selection'
-                    selected_candidate['candidates_available'] = len(candidates)
-                    
-                    return selected_candidate
-            except ValueError:
-                pass
-        
-        # If parsing fails, let LLM try simpler format
-        return self._fallback_simple_disambiguation(entity, candidates, full_text)
+            # Parse the LLM response
+            choice_match = re.search(r'Choice:\s*(\d+|NONE)', result, re.IGNORECASE)
+            confidence_match = re.search(r'Confidence:\s*(high|medium|low)', result, re.IGNORECASE)
+            reasoning_match = re.search(r'Reasoning:\s*(.+?)(?:\n|$)', result, re.IGNORECASE | re.DOTALL)
+            
+            if choice_match:
+                choice_str = choice_match.group(1).upper()
                 
-    except Exception as e:
-        print(f"LLM disambiguation failed: {e}")
-        return self._fallback_simple_disambiguation(entity, candidates, full_text)
+                if choice_str == "NONE":
+                    return None
+                
+                try:
+                    choice = int(choice_str) - 1  # Convert to 0-based index
+                    if 0 <= choice < len(candidates):
+                        selected_candidate = candidates[choice]
+                        
+                        # Add disambiguation metadata
+                        selected_candidate['disambiguation_confidence'] = confidence_match.group(1) if confidence_match else 'medium'
+                        selected_candidate['disambiguation_reasoning'] = reasoning_match.group(1).strip() if reasoning_match else 'LLM selection'
+                        selected_candidate['candidates_available'] = len(candidates)
+                        
+                        return selected_candidate
+                except ValueError:
+                    pass
+            
+            # If parsing fails, let LLM try simpler format
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)
+                    
+        except Exception as e:
+            print(f"LLM disambiguation failed: {e}")
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)
 
-def _fallback_simple_disambiguation(self, entity, candidates, full_text):
-    """Simplified LLM disambiguation if main method fails."""
-    try:
-        import google.generativeai as genai
-        
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return candidates[0]
-        
-        # Super simple prompt as backup
-        candidates_simple = [f"{i+1}. {c['title']}: {c['description'][:200]}" 
-                           for i, c in enumerate(candidates)]
-        
-        simple_prompt = f"""Text context: "{full_text[:1000]}..."
+    def _fallback_simple_disambiguation(self, entity, candidates, full_text):
+        """Simplified LLM disambiguation if main method fails."""
+        try:
+            import google.generativeai as genai
+            
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                return candidates[0]
+            
+            # Super simple prompt as backup
+            candidates_simple = [f"{i+1}. {c['title']}: {c['description'][:200]}" 
+                               for i, c in enumerate(candidates)]
+            
+            simple_prompt = f"""Text context: "{full_text[:1000]}..."
 Entity: "{entity['text']}"
 Options: {chr(10).join(candidates_simple)}
 
 Which option number (1-{len(candidates)}) best fits this entity in this context? Just respond with the number."""
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            response = model.generate_content(simple_prompt)
+            result = response.text.strip()
+            
+            # Extract number
+            match = re.search(r'(\d+)', result)
+            if match:
+                choice = int(match.group(1)) - 1
+                if 0 <= choice < len(candidates):
+                    candidates[choice]['disambiguation_method'] = 'llm_simple_fallback'
+                    return candidates[choice]
+            
+        except Exception:
+            pass
         
-        response = model.generate_content(simple_prompt)
-        result = response.text.strip()
+        # Ultimate fallback
+        if candidates:
+            candidates[0]['disambiguation_method'] = 'first_result_fallback'
+            return candidates[0]
         
-        # Extract number
-        match = re.search(r'(\d+)', result)
-        if match:
-            choice = int(match.group(1)) - 1
-            if 0 <= choice < len(candidates):
-                candidates[choice]['disambiguation_method'] = 'llm_simple_fallback'
-                return candidates[choice]
-        
-    except Exception:
-        pass
-    
-    # Ultimate fallback
-    if candidates:
-        candidates[0]['disambiguation_method'] = 'first_result_fallback'
-        return candidates[0]
-    
-    return None
-
-    def _analyze_text_for_disambiguation(self, text: str) -> Dict[str, bool]:
-        """Analyze the full text to provide context clues for disambiguation."""
-        text_lower = text.lower()
-        
-        indicators = {
-            'ancient_context': False,
-            'mythological_context': False,
-            'classical_context': False,
-            'historical_narrative': False
-        }
-        
-        # Check for ancient/historical markers
-        ancient_markers = [
-            'persian learned men', 'phoenicians', 'egyptian', 'assyrian',
-            'ancient', 'antiquity', 'classical', 'mythology', 'mythological',
-            'bc', 'bce', 'herodotus', 'homer', 'came to our seas',
-            'at that time', 'daughter of the king', 'long voyages',
-            'merchandise', 'cargo', 'wares', 'preeminent', 'sailed away'
-        ]
-        
-        if any(marker in text_lower for marker in ancient_markers):
-            indicators['ancient_context'] = True
-        
-        # Check for mythological context
-        mythological_markers = [
-            'according to persians and greeks alike', 'daughter of', 'king',
-            'mythology', 'mythological', 'god', 'goddess', 'deity',
-            'legendary', 'epic', 'traditional story'
-        ]
-        
-        if any(marker in text_lower for marker in mythological_markers):
-            indicators['mythological_context'] = True
-        
-        # Check for classical period
-        classical_markers = [
-            'hellas', 'greek', 'persian', 'phoenician', 'argos',
-            'classical', 'ancient greece', 'ancient greek'
-        ]
-        
-        if any(marker in text_lower for marker in classical_markers):
-            indicators['classical_context'] = True
-        
-        # Check for historical narrative style
-        narrative_markers = [
-            'say that', 'they say', 'according to', 'at that time',
-            'came to', 'sailed', 'settled', 'occupied'
-        ]
-        
-        if any(marker in text_lower for marker in narrative_markers):
-            indicators['historical_narrative'] = True
-        
-        return indicators
+        return None
 
     def link_to_wikipedia_with_llm_disambiguation(self, entities, full_text):
         """Use LLM to help disambiguate Wikipedia results based on context - LAST RESORT only."""
         
         for entity in entities:
-            # Skip if already has higher priority links (Getty AAT, Wikidata, or Britannica)
+            # Skip if already has higher priority links
             if (entity.get('getty_aat_url') or 
                 entity.get('wikidata_url') or 
                 entity.get('britannica_url')):
@@ -788,17 +1014,12 @@ Which option number (1-{len(candidates)}) best fits this entity in this context?
                 if entity.get('latitude') is not None:
                     continue
                 
-                # Try LLM-enhanced contextual geocoding first
+                # Try LLM-enhanced contextual geocoding
                 if self._try_llm_contextual_geocoding(entity, geographical_context, processed_text):
                     continue
                     
-                # Fall back to pattern-based contextual geocoding
-                context_clues = self._detect_geographical_context(processed_text, entities)
-                if self._try_contextual_geocoding(entity, context_clues):
-                    continue
-                    
-                # Final fallback to OpenStreetMap with context
-                if self._try_openstreetmap(entity, geographical_context):
+                # Fallback to basic geocoding
+                if self._try_basic_geocoding(entity):
                     continue
         
         return entities
@@ -863,33 +1084,33 @@ Response (geographical context only):"""
             
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                return self._basic_contextual_geocoding(entity, geographical_context)
+                return self._try_basic_geocoding(entity)
             
-            # Let LLM decide how to adapt historical context for modern geocoding
+            # Let LLM decide how to adapt context for modern geocoding
             prompt = f"""You need to help geocode a location for mapping purposes.
-    
-    ENTITY: "{entity['text']}" (Type: {entity['type']})
-    DETECTED CONTEXT: "{geographical_context}"
-    SURROUNDING TEXT: "{full_text[max(0, entity['start']-200):entity['end']+200]}"
-    
-    TASK: Create 2-3 search terms that would help find the correct modern location for mapping this historical/cultural entity.
-    
-    CONSIDERATIONS:
-    - If it's a historical place, what modern location best represents it?
-    - If it's an ancient city, where are the ruins/archaeological site?
-    - If it's a cultural region, what modern political entity covers it?
-    - If it's already modern, keep as-is
-    
-    EXAMPLES:
-    - "Ancient Rome" → ["Rome, Italy", "Roman Forum, Rome"]
-    - "Medieval London" → ["London, UK", "City of London"]  
-    - "Classical Athens" → ["Athens, Greece", "Ancient Agora, Athens"]
-    - "Argos" in ancient Greek context → ["Argos, Greece", "Ancient Argos, Peloponnese"]
-    
-    Respond with 2-3 search terms in JSON format:
-    ["search term 1", "search term 2", "search term 3"]
-    """
-    
+
+ENTITY: "{entity['text']}" (Type: {entity['type']})
+DETECTED CONTEXT: "{geographical_context}"
+SURROUNDING TEXT: "{full_text[max(0, entity['start']-200):entity['end']+200]}"
+
+TASK: Create 2-3 search terms that would help find the correct modern location for mapping this entity.
+
+CONSIDERATIONS:
+- If it's a historical place, what modern location best represents it?
+- If it's an ancient city, where are the ruins/archaeological site?
+- If it's a cultural region, what modern political entity covers it?
+- If it's already modern, keep as-is
+
+EXAMPLES:
+- "Ancient Rome" → ["Rome, Italy", "Roman Forum, Rome"]
+- "Medieval London" → ["London, UK", "City of London"]  
+- "Classical Athens" → ["Athens, Greece", "Ancient Agora, Athens"]
+- "Argos" in ancient Greek context → ["Argos, Greece", "Ancient Argos, Peloponnese"]
+
+Respond with 2-3 search terms in JSON format:
+["search term 1", "search term 2", "search term 3"]
+"""
+
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
@@ -903,8 +1124,8 @@ Response (geographical context only):"""
             print(f"LLM geocoding context failed: {e}")
         
         # Fallback to basic approach
-        return self._basic_contextual_geocoding(entity, geographical_context)
-    
+        return self._try_basic_geocoding(entity)
+
     def _geocode_with_terms(self, entity, search_terms, geographical_context):
         """Geocode using LLM-generated search terms."""
         for search_term in search_terms:
@@ -937,682 +1158,34 @@ Response (geographical context only):"""
         
         return False
 
-    def _extract_facility_context(self, entity, full_text):
-        """Use LLM to determine facility type from context."""
+    def _try_basic_geocoding(self, entity):
+        """Basic geocoding fallback using just the entity name."""
         try:
-            import google.generativeai as genai
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                return ""
-            
-            # Get context around the entity
-            start = max(0, entity['start'] - 100)
-            end = min(len(full_text), entity['end'] + 100)
-            context = full_text[start:end]
-            
-            prompt = f"""Analyze this text context to determine what type of facility "{entity['text']}" is.
-    
-    FACILITY ENTITY: "{entity['text']}"
-    CONTEXT: "{context}"
-    
-    What type of facility is this? Consider:
-    - Religious buildings (church, mosque, temple, synagogue, etc.)
-    - Performance venues (theatre, concert hall, opera house, etc.) 
-    - Educational institutions (school, university, academy, etc.)
-    - Healthcare facilities (hospital, clinic, dispensary, etc.)
-    - Cultural institutions (museum, library, gallery, etc.)
-    - Commercial venues (hotel, restaurant, market, etc.)
-    - Sports/recreational facilities (stadium, gym, pool, etc.)
-    - Government buildings (courthouse, parliament, city hall, etc.)
-    - Any other facility type
-    
-    Respond with just the facility type (e.g., "theatre", "mosque", "university", "hospital") or "unknown" if unclear.
-    """
-    
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            
-            response = model.generate_content(prompt)
-            facility_type = response.text.strip().lower()
-            
-            # Clean up response
-            facility_type = facility_type.replace('"', '').replace("'", '')
-            
-            return facility_type if facility_type != "unknown" else ""
-            
-        except Exception as e:
-            print(f"LLM facility context extraction failed: {e}")
-            return ""
-
-    def _try_contextual_geocoding(self, entity, context_clues):
-        """Try geocoding with LLM-enhanced geographical context."""
-        if not context_clues:
-            return False
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                'q': entity['text'],
+                'format': 'json',
+                'limit': 1,
+                'addressdetails': 1
+            }
+            headers = {'User-Agent': 'EntityLinker/1.0'}
         
-        try:
-            import google.generativeai as genai
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                return self._basic_contextual_fallback(entity, context_clues)
-            
-            # Let LLM create intelligent search variations
-            prompt = f"""Create geocoding search terms for this entity using the detected geographical context.
-    
-    ENTITY: "{entity['text']}" (Type: {entity['type']})
-    DETECTED CONTEXT CLUES: {context_clues}
-    
-    TASK: Generate 2-3 search terms that would help geocode this entity accurately using the geographical context.
-    
-    CONSIDERATIONS:
-    - Use the context clues to disambiguate the location
-    - Consider common alternative names/spellings
-    - Include country/region qualifiers where helpful
-    - Prioritize the most specific and likely to succeed
-    
-    EXAMPLES:
-    - Entity: "Manchester", Context: ["uk", "england"] → ["Manchester, UK", "Manchester, England"]
-    - Entity: "Alexandria", Context: ["egypt", "ancient"] → ["Alexandria, Egypt", "Alexandria, Ancient Egypt"]
-    - Entity: "Paris", Context: ["france", "european"] → ["Paris, France", "Paris, Île-de-France"]
-    
-    Respond with a JSON array of 2-3 search terms:
-    ["search term 1", "search term 2", "search term 3"]
-    """
-    
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            
-            response = model.generate_content(prompt)
-            search_terms = self.extract_json_from_response(response.text)
-            
-            if search_terms and isinstance(search_terms, list):
-                return self._geocode_with_search_terms(entity, search_terms, 'llm_contextual')
-            
-        except Exception as e:
-            print(f"LLM contextual geocoding failed: {e}")
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    result = data[0]
+                    entity['latitude'] = float(result['lat'])
+                    entity['longitude'] = float(result['lon'])
+                    entity['location_name'] = result['display_name']
+                    entity['geocoding_source'] = 'basic_geocoding'
+                    return True
         
-        # Fallback to basic approach
-        return self._basic_contextual_fallback(entity, context_clues)
-    
-    def _basic_contextual_fallback(self, entity, context_clues):
-        """Simple fallback that just appends context without hardcoded mappings."""
-        search_variations = [entity['text']]
-        
-        # Just append context clues directly - let geocoding service handle variations
-        for context in context_clues[:2]:  # Limit to top 2 context clues
-            search_variations.append(f"{entity['text']}, {context}")
-        
-        return self._geocode_with_search_terms(entity, search_variations, 'basic_contextual')
-    
-    def _geocode_with_search_terms(self, entity, search_terms, method):
-        """Common geocoding logic using provided search terms."""
-        for search_term in search_terms[:3]:
-            try:
-                url = "https://nominatim.openstreetmap.org/search"
-                params = {
-                    'q': search_term,
-                    'format': 'json',
-                    'limit': 1,
-                    'addressdetails': 1
-                }
-                headers = {'User-Agent': 'EntityLinker/1.0'}
-            
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        result = data[0]
-                        entity['latitude'] = float(result['lat'])
-                        entity['longitude'] = float(result['lon'])
-                        entity['location_name'] = result['display_name']
-                        entity['geocoding_source'] = method
-                        entity['search_term_used'] = search_term
-                        return True
-            
-                time.sleep(0.3)
-            except Exception:
-                continue
-        
-        return False
-
-    def _try_openstreetmap(self, entity, geographical_context=None):
-        """Fall back to direct OpenStreetMap Nominatim API with geographical context."""
-        try:
-            # Create search variations using geographical context
-            search_variations = [entity['text']]
-            
-            if geographical_context:
-                # Add the LLM-detected context
-                search_variations.append(f"{entity['text']}, {geographical_context}")
-                
-                # Handle historical contexts by modernizing them
-                context_mappings = {
-                    'Ancient Greece': 'Greece',
-                    'Roman Empire': 'Italy', 
-                    'Medieval England': 'England, UK',
-                    'Victorian London': 'London, UK',
-                    'Classical Athens': 'Athens, Greece',
-                    'Ancient Rome': 'Rome, Italy'
-                }
-                
-                modern_context = context_mappings.get(geographical_context, geographical_context)
-                if modern_context != geographical_context:
-                    search_variations.append(f"{entity['text']}, {modern_context}")
-            
-            # Remove duplicates while preserving order
-            search_variations = list(dict.fromkeys(search_variations))
-            
-            # Try each variation
-            for search_term in search_variations:
-                url = "https://nominatim.openstreetmap.org/search"
-                params = {
-                    'q': search_term,
-                    'format': 'json',
-                    'limit': 1,
-                    'addressdetails': 1
-                }
-                headers = {'User-Agent': 'EntityLinker/1.0'}
-            
-                response = requests.get(url, params=params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data:
-                        result = data[0]
-                        entity['latitude'] = float(result['lat'])
-                        entity['longitude'] = float(result['lon'])
-                        entity['location_name'] = result['display_name']
-                        entity['geocoding_source'] = 'openstreetmap_contextual' if geographical_context else 'openstreetmap'
-                        entity['search_term_used'] = search_term
-                        if geographical_context:
-                            entity['llm_geographical_context'] = geographical_context
-                        return True
-            
-                time.sleep(0.3)  # Rate limiting
-        
-        except Exception as e:
+            time.sleep(0.3)
+        except Exception:
             pass
         
         return False
-
-    def link_to_wikidata(self, entities):
-        """Add context-aware Wikidata linking using LLM intelligence."""
-        for entity in entities:
-            # Skip if already has Getty AAT link (higher priority)
-            if entity.get('getty_aat_url'):
-                continue
-                
-            try:
-                # Use LLM to create intelligent Wikidata search queries
-                search_queries = self._create_wikidata_search_queries(entity)
-                
-                # Try each LLM-generated query
-                for search_query in search_queries:
-                    wikidata_result = self._search_wikidata(search_query, entity)
-                    if wikidata_result:
-                        entity.update(wikidata_result)
-                        break
-                
-                time.sleep(0.1)  # Rate limiting
-                
-            except Exception as e:
-                print(f"Wikidata linking failed for {entity['text']}: {e}")
-            
-        return entities
-    
-    def _create_wikidata_search_queries(self, entity):
-        """Use LLM to create intelligent Wikidata search queries."""
-        try:
-            import google.generativeai as genai
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                return [entity['text']]  # Fallback to basic search
-            
-            entity_context = entity.get('context', {})
-            
-            prompt = f"""Create optimized Wikidata search queries for this entity.
-    
-    ENTITY: "{entity['text']}" (Type: {entity['type']})
-    
-    CONTEXT:
-    - Period: {entity_context.get('period', 'unknown')}
-    - Region: {entity_context.get('region', 'unknown')}
-    - Culture: {entity_context.get('culture', 'unknown')}
-    - Subject: {entity_context.get('subject_matter', 'unknown')}
-    
-    TASK: Generate 2-3 search queries that would find the correct Wikidata entry for this entity in this context.
-    
-    CONSIDERATIONS:
-    - Add contextual qualifiers to disambiguate
-    - Consider alternative names/spellings
-    - Include cultural/temporal context where relevant
-    - Make queries specific enough to avoid wrong matches
-    
-    EXAMPLES:
-    - "Argos" in ancient Greek context → ["Argos Greece ancient city", "Argos Peloponnese", "Argos archaeological site"]
-    - "Io" in mythology context → ["Io Greek mythology", "Io daughter Inachus", "Io mythological figure"]
-    - "Paris" in French context → ["Paris France capital", "Paris city France"]
-    - "Mercury" in astronomy context → ["Mercury planet", "Mercury solar system"]
-    
-    Respond with JSON array of 2-3 search queries:
-    ["query 1", "query 2", "query 3"]
-    """
-    
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            
-            response = model.generate_content(prompt)
-            search_queries = self.extract_json_from_response(response.text)
-            
-            if search_queries and isinstance(search_queries, list):
-                return search_queries
-            
-        except Exception as e:
-            print(f"LLM search query generation failed: {e}")
-        
-        # Fallback to basic query
-        return [entity['text']]
-    
-    def _search_wikidata(self, search_query, entity):
-        """Search Wikidata and use LLM to select best match."""
-        try:
-            url = "https://www.wikidata.org/w/api.php"
-            params = {
-                'action': 'wbsearchentities',
-                'format': 'json',
-                'search': search_query,
-                'language': 'en',
-                'limit': 5,
-                'type': 'item'
-            }
-            
-            response = requests.get(url, params=params, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                results = data.get('search', [])
-                
-                if not results:
-                    return None
-                
-                if len(results) == 1:
-                    # Only one result, use it
-                    result = results[0]
-                    return {
-                        'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
-                        'wikidata_description': result.get('description', ''),
-                        'wikidata_search_query': search_query
-                    }
-                
-                # Multiple results - use LLM to choose best match
-                return self._llm_select_wikidata_result(entity, results, search_query)
-            
-        except Exception as e:
-            print(f"Wikidata search failed for '{search_query}': {e}")
-        
-        return None
-    
-    def _llm_select_wikidata_result(self, entity, results, search_query):
-        """Use LLM to select the best Wikidata result."""
-        try:
-            import google.generativeai as genai
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                # Fallback to first result
-                result = results[0]
-                return {
-                    'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
-                    'wikidata_description': result.get('description', ''),
-                    'wikidata_search_query': search_query
-                }
-            
-            entity_context = entity.get('context', {})
-            
-            candidates_text = []
-            for i, result in enumerate(results):
-                candidates_text.append(
-                    f"{i+1}. {result.get('label', 'No label')}: {result.get('description', 'No description')}"
-                )
-            
-            prompt = f"""Select the best Wikidata match for this entity.
-    
-    ENTITY: "{entity['text']}" (Type: {entity['type']})
-    SEARCH QUERY USED: "{search_query}"
-    
-    CONTEXT:
-    - Period: {entity_context.get('period', 'unknown')}
-    - Region: {entity_context.get('region', 'unknown')}
-    - Culture: {entity_context.get('culture', 'unknown')}
-    
-    WIKIDATA CANDIDATES:
-    {chr(10).join(candidates_text)}
-    
-    Which candidate (1-{len(results)}) best matches this entity in this context?
-    If none are appropriate, respond with "NONE".
-    
-    Response format: Just the number (1-{len(results)}) or "NONE"
-    """
-    
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            
-            response = model.generate_content(prompt)
-            result_text = response.text.strip()
-            
-            # Parse LLM response
-            match = re.search(r'(\d+)', result_text)
-            if match:
-                choice = int(match.group(1)) - 1
-                if 0 <= choice < len(results):
-                    result = results[choice]
-                    return {
-                        'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
-                        'wikidata_description': result.get('description', ''),
-                        'wikidata_search_query': search_query,
-                        'wikidata_selection_method': 'llm_intelligent'
-                    }
-            
-            # Fallback to first result
-            result = results[0]
-            return {
-                'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
-                'wikidata_description': result.get('description', ''),
-                'wikidata_search_query': search_query,
-                'wikidata_selection_method': 'first_result_fallback'
-            }
-            
-        except Exception as e:
-            print(f"LLM Wikidata selection failed: {e}")
-            # Fallback to first result
-            result = results[0]
-            return {
-                'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
-                'wikidata_description': result.get('description', ''),
-                'wikidata_search_query': search_query,
-                'wikidata_selection_method': 'error_fallback'
-            }
-
-    def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
-        """Use LLM to intelligently detect geographical context."""
-        try:
-            import google.generativeai as genai
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                return self._pycountry_fallback(text, entities)
-            
-            # Extract geographical entities for context
-            geo_entities = [e['text'] for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY']]
-            
-            prompt = f"""Analyze this text to identify geographical context clues for geocoding purposes.
-    
-    TEXT: "{text[:1500]}..."
-    
-    IDENTIFIED GEOGRAPHICAL ENTITIES: {geo_entities}
-    
-    TASK: Extract geographical context that would help disambiguate place names for geocoding.
-    
-    Consider:
-    - Countries, regions, states, provinces mentioned
-    - Historical geographical references
-    - Cultural/linguistic geographic indicators
-    - Alternative names for places (e.g., "Britain" = "UK")
-    - Postal codes or address patterns
-    - Implicit geographical context from cultural references
-    
-    Respond with a JSON array of 2-4 geographical context clues, ordered by relevance:
-    ["most specific context", "broader context", "alternative context"]
-    
-    EXAMPLES:
-    - Text about "London theatre district" → ["London, UK", "England", "United Kingdom"]
-    - Text with "ZIP code 90210" → ["California, USA", "United States", "Beverly Hills"]
-    - Text about "ancient Athens" → ["Greece", "Ancient Greece", "Mediterranean"]
-    - Text mentioning "Sydney Opera House" → ["Sydney, Australia", "Australia", "New South Wales"]
-    
-    Focus on context that would help geocoding services find the right places.
-    """
-    
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            
-            response = model.generate_content(prompt)
-            context_clues = self.extract_json_from_response(response.text)
-            
-            if context_clues and isinstance(context_clues, list):
-                return context_clues[:3]  # Limit to top 3
-            
-        except Exception as e:
-            print(f"LLM geographical context detection failed: {e}")
-        
-        # Fallback to pycountry approach
-        return self._pycountry_fallback(text, entities)
-    
-    def _pycountry_fallback(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
-        """Fallback using pycountry when LLM is unavailable."""
-        try:
-            import pycountry
-            
-            context_clues = []
-            text_lower = text.lower()
-            
-            # Extract from entities
-            geo_entities = [e['text'].lower() for e in entities 
-                           if e['type'] in ['GPE', 'LOCATION', 'FACILITY']]
-            
-            # Check against pycountry
-            for country in pycountry.countries:
-                if country.name.lower() in text_lower:
-                    context_clues.append(country.name)
-            
-            # Add geo entities
-            context_clues.extend(geo_entities)
-            
-            return list(dict.fromkeys(context_clues))[:3]
-            
-        except ImportError:
-            # Ultimate fallback - just use entities
-            return [e['text'] for e in entities if e['type'] in ['GPE', 'LOCATION']][:3]
-
-    def link_to_getty_aat(self, entities):
-        """Add Getty Art & Architecture Thesaurus linking - especially good for PRODUCT, FACILITY, WORK_OF_ART entities."""
-        for entity in entities:
-            # Getty AAT is particularly valuable for these entity types
-            relevant_types = ['PRODUCT', 'FACILITY', 'WORK_OF_ART', 'EVENT', 'ORGANIZATION']
-            if entity['type'] not in relevant_types:
-                continue
-                
-            try:
-                # Try multiple approaches to find Getty AAT entries
-                getty_result = None
-                
-                # Method 1: Direct search via Getty's search API (more reliable than SPARQL)
-                getty_result = self._search_getty_api(entity['text'])
-                
-                if not getty_result:
-                    # Method 2: Try variations of the search term
-                    variations = self._create_getty_search_variations(entity['text'], entity['type'])
-                    for variation in variations:
-                        getty_result = self._search_getty_api(variation)
-                        if getty_result:
-                            break
-                
-                if getty_result:
-                    entity['getty_aat_url'] = getty_result['url']
-                    entity['getty_aat_label'] = getty_result['label']
-                    entity['getty_aat_description'] = getty_result['description']
-                    entity['getty_search_term'] = getty_result['search_term']
-                
-                time.sleep(0.5)  # More conservative rate limiting for Getty
-                
-            except Exception as e:
-                print(f"Getty AAT search failed for {entity['text']}: {e}")
-                # Continue silently - Getty can be unreliable
-                pass
-        
-        return entities
-
-    def _search_getty_api(self, search_term):
-        """Search Getty AAT using their REST API instead of SPARQL."""
-        try:
-            # Getty's Vocabulary Program API
-            search_url = "http://vocab.getty.edu/sparql.json"
-            
-            # Simplified SPARQL query that's more likely to work
-            query = f"""
-            PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-            PREFIX gvp: <http://vocab.getty.edu/ontology#>
-            PREFIX xl: <http://www.w3.org/2008/05/skos-xl#>
-            
-            SELECT ?subject ?term ?note WHERE {{
-              ?subject skos:inScheme <http://vocab.getty.edu/aat/> ;
-                       gvp:prefLabelGVP/xl:literalForm ?term ;
-                       skos:scopeNote ?noteObj .
-              ?noteObj rdf:value ?note .
-              FILTER(CONTAINS(LCASE(?term), LCASE("{search_term}")))
-            }}
-            LIMIT 5
-            """
-            
-            headers = {
-                'Accept': 'application/sparql-results+json',
-                'User-Agent': 'EntityLinker/1.0'
-            }
-            
-            response = requests.get(search_url, 
-                                  params={'query': query}, 
-                                  headers=headers, 
-                                  timeout=15)
-            
-            if response.status_code == 200:
-                data = response.json()
-                results = data.get('results', {}).get('bindings', [])
-                
-                if results:
-                    result = results[0]  # Take first result
-                    subject_uri = result['subject']['value']
-                    term = result['term']['value']
-                    note = result.get('note', {}).get('value', '')
-                    
-                    # Convert URI to web URL
-                    aat_id = subject_uri.split('/')[-1]
-                    web_url = f"http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid={aat_id}"
-                    
-                    return {
-                        'url': web_url,
-                        'label': term,
-                        'description': note[:200] if note else f"Getty AAT entry for {term}",
-                        'search_term': search_term
-                    }
-            
-            # Fallback: Try alternative Getty search approach
-            return self._search_getty_alternative(search_term)
-            
-        except Exception as e:
-            print(f"Getty SPARQL search failed for '{search_term}': {e}")
-            return self._search_getty_alternative(search_term)
-
-    def _search_getty_alternative(self, search_term):
-        """Alternative Getty search using their web interface."""
-        try:
-            # Search Getty's web interface directly
-            search_url = "http://www.getty.edu/vow/AATServlet"
-            params = {
-                'english': 'N',
-                'find': search_term,
-                'logic': 'AND',
-                'note': '',
-                'page': '1'
-            }
-            
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(search_url, params=params, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                # Look for AAT entries in the response
-                import re
-                # Find AAT IDs in the response
-                aat_pattern = r'AATFullDisplay\?[^"]*subjectid=(\d+)[^"]*"[^>]*>([^<]+)</a>'
-                matches = re.findall(aat_pattern, response.text)
-                
-                if matches:
-                    aat_id, label = matches[0]
-                    web_url = f"http://www.getty.edu/vow/AATFullDisplay?find=&logic=AND&note=&page=1&subjectid={aat_id}"
-                    
-                    return {
-                        'url': web_url,
-                        'label': label.strip(),
-                        'description': f"Getty AAT architectural/cultural term: {label.strip()}",
-                        'search_term': search_term
-                    }
-            
-        except Exception as e:
-            print(f"Getty alternative search failed for '{search_term}': {e}")
-        
-        return None
-
-    def _create_getty_search_variations(self, text, entity_type):
-        """Create search variations optimized for Getty AAT."""
-        variations = [text]
-        text_lower = text.lower()
-        
-        # Add plurals/singulars
-        if text_lower.endswith('s') and len(text) > 3:
-            variations.append(text[:-1])  # Remove 's'
-        elif not text_lower.endswith('s'):
-            variations.append(text + 's')  # Add 's'
-        
-        # Add architectural/cultural terms for different entity types
-        if entity_type == 'FACILITY':
-            facility_terms = ['building', 'structure', 'architecture']
-            variations.extend([f"{text} {term}" for term in facility_terms])
-            
-        elif entity_type == 'PRODUCT':
-            product_terms = ['architectural element', 'component', 'feature']
-            variations.extend([f"{text} {term}" for term in product_terms])
-            
-        elif entity_type == 'WORK_OF_ART':
-            art_terms = ['art', 'artwork', 'creative work']
-            variations.extend([f"{text} {term}" for term in art_terms])
-        
-        # Remove duplicates
-        return list(dict.fromkeys(variations))[:5]  # Limit to 5 variations
-
-    def link_to_britannica(self, entities):
-        """Add basic Britannica linking - only for entities without Getty AAT or Wikidata links.""" 
-        for entity in entities:
-            # Skip if already has Getty AAT or Wikidata link
-            if entity.get('getty_aat_url') or entity.get('wikidata_url'):
-                continue
-                
-            try:
-                search_url = "https://www.britannica.com/search"
-                params = {'query': entity['text']}
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                
-                response = requests.get(search_url, params=params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    # Look for article links
-                    pattern = r'href="(/topic/[^"]*)"[^>]*>([^<]*)</a>'
-                    matches = re.findall(pattern, response.text)
-                    
-                    for url_path, link_text in matches:
-                        if (entity['text'].lower() in link_text.lower() or 
-                            link_text.lower() in entity['text'].lower()):
-                            entity['britannica_url'] = f"https://www.britannica.com{url_path}"
-                            entity['britannica_title'] = link_text.strip()
-                            break
-                
-                time.sleep(0.3)  # Rate limiting
-            except Exception:
-                pass
-        
-        return entities
 
     def link_to_openstreetmap(self, entities):
         """Add OpenStreetMap links to addresses with geographical context."""
@@ -1635,7 +1208,6 @@ Response (geographical context only):"""
                 
                 # Try each variation
                 for search_term in search_variations:
-                    # Search OpenStreetMap Nominatim for the address
                     url = "https://nominatim.openstreetmap.org/search"
                     params = {
                         'q': search_term,
@@ -1677,8 +1249,7 @@ class StreamlitLLMEntityLinker:
     """
     Streamlit wrapper for the LLM Entity Linker class.
     
-    Provides the same interface as the NLTK version but uses LLM for entity extraction
-    AND intelligent disambiguation of Wikipedia links.
+    Provides clean interface for LLM-driven entity extraction and intelligent disambiguation.
     """
     
     def __init__(self):
@@ -1702,14 +1273,14 @@ class StreamlitLLMEntityLinker:
         """Cached entity extraction to avoid reprocessing same text."""
         entities = _self.entity_linker.extract_entities(text)
         return json.dumps(entities, default=str)
-    
+
     @st.cache_data  
     def cached_link_to_wikidata(_self, entities_json: str) -> str:
         """Cached Wikidata linking."""
         entities = json.loads(entities_json)
         linked_entities = _self.entity_linker.link_to_wikidata(entities)
         return json.dumps(linked_entities, default=str)
-    
+
     @st.cache_data
     def cached_link_to_britannica(_self, entities_json: str) -> str:
         """Cached Britannica linking."""
@@ -1718,20 +1289,17 @@ class StreamlitLLMEntityLinker:
         return json.dumps(linked_entities, default=str)
 
     def render_header(self):
-        """Render the application header with logo - same as NLTK app."""
+        """Render the application header with logo."""
         # Display logo if it exists
         try:
-            # Try to load and display the logo
-            logo_path = "logo.png"  # You can change this filename as needed
+            logo_path = "logo.png"
             if os.path.exists(logo_path):
-                # Logo naturally aligns to the left without columns
-                st.image(logo_path, width=300)  # Adjust width as needed
+                st.image(logo_path, width=300)
             else:
-                # If logo file doesn't exist, show a placeholder or message
                 st.info("Place your logo.png file in the same directory as this app to display it here")
         except Exception as e:
-            # If there's any error loading the logo, continue without it
             st.warning(f"Could not load logo: {e}")        
+        
         # Add some spacing after logo
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -1739,7 +1307,7 @@ class StreamlitLLMEntityLinker:
         st.header("From Text to Linked Data using LLM")
         st.markdown("**Extract and link named entities from text using Gemini LLM with intelligent disambiguation**")
         
-        # Create a simple process diagram - enhanced with LLM disambiguation
+        # Create a simple process diagram
         st.markdown("""
         <div style="background-color: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #E0D7C0;">
             <div style="text-align: center; margin-bottom: 20px;">
@@ -1748,54 +1316,48 @@ class StreamlitLLMEntityLinker:
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>Gemini LLM Entity Recognition</strong>
+                     <strong>Gemini LLM Context Analysis</strong>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #BF7B69; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>LLM-Powered Disambiguation</strong><br><small>Context-aware linking decisions</small>
+                     <strong>LLM Entity Recognition</strong><br><small>Context-aware extraction</small>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="text-align: center;">
-                    <strong>Link to Knowledge Bases:</strong>
+                    <strong>Intelligent Linking Priority:</strong>
                 </div>
                 <div style="margin: 15px 0;">
                     <div style="background-color: #EFCA89; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>Wikidata</strong><br><small>Structured knowledge</small>
+                         <strong>1. Getty AAT</strong><br><small>Cultural/architectural terms</small>
                     </div>
                     <div style="background-color: #C3B5AC; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                        <strong>Wikipedia/Britannica</strong><br><small>Encyclopedia articles</small>
+                        <strong>2. Wikidata</strong><br><small>Structured knowledge</small>
                     </div>
                     <div style="background-color: #E6D7C9; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>Geocoding</strong><br><small>Coordinates & locations</small>
+                         <strong>3. Britannica</strong><br><small>Scholarly articles</small>
+                    </div>
+                    <div style="background-color: #D4C5B9; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
+                         <strong>4. Wikipedia</strong><br><small>LLM disambiguated</small>
                     </div>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
-                <div style="text-align: center;">
-                    <strong>Output Formats:</strong>
-                </div>
-                <div style="margin: 15px 0;">
-                    <div style="background-color: #E8E1D4; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em; border: 2px solid #EFCA89;">
-                         <strong>JSON-LD Export</strong><br><small>Structured data format</small>
-                    </div>
-                    <div style="background-color: #E8E1D4; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em; border: 2px solid #C3B5AC;">
-                         <strong>HTML Export</strong><br><small>Portable web format</small>
-                    </div>
+                <div style="background-color: #F0EAE2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
+                     <strong>LLM-Enhanced Geocoding</strong><br><small>Context-aware coordinates</small>
                 </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
     def render_sidebar(self):
-        """Render the sidebar with information about LLM disambiguation."""
-        # Entity linking information
-        st.sidebar.subheader("Smart Entity Linking")
-        st.sidebar.info("Entities are linked with priority hierarchy: 1) Getty AAT (authoritative art & architecture terminology), 2) Wikidata (structured knowledge), 3) Britannica (scholarly encyclopedia), 4) Wikipedia (general reference). The LLM provides intelligent disambiguation for the final step.")
+        """Render the sidebar with information about LLM approach."""
+        st.sidebar.subheader("LLM-Driven Approach")
+        st.sidebar.info("This system uses Gemini LLM throughout the entire pipeline for maximum intelligence and zero hardcoded bias. Context analysis, entity extraction, disambiguation, and geocoding are all powered by LLM understanding.")
         
-        st.sidebar.subheader("Geocoding")
-        st.sidebar.info("Places and addresses are geocoded using multiple services with contextual hints for accurate coordinates.")
+        st.sidebar.subheader("Linking Priority")
+        st.sidebar.info("1) Getty AAT (cultural/architectural) 2) Wikidata (structured) 3) Britannica (scholarly) 4) Wikipedia (with LLM disambiguation)")
 
     def render_input_section(self):
-        """Render the text input section - same as NLTK app."""
+        """Render the text input section."""
         st.header("Input Text")
         
         # Add title input
@@ -1805,18 +1367,15 @@ class StreamlitLLMEntityLinker:
             help="This will be used for naming output files"
         )
         
-        # Sample text for demonstration
-        sample_text = ""       
-        # Text input area - always shown and editable
+        # Text input area
         text_input = st.text_area(
             "Enter your text here:",
-            value=sample_text,  # Pre-populate with sample text
-            height=200,  # Reduced height for mobile
+            height=200,
             placeholder="Paste your text here for entity extraction...",
             help="You can edit this text or replace it with your own content"
         )
         
-        # File upload option in expander for mobile
+        # File upload option in expander
         with st.expander("Or upload a text file"):
             uploaded_file = st.file_uploader(
                 "Choose a text file",
@@ -1827,9 +1386,8 @@ class StreamlitLLMEntityLinker:
             if uploaded_file is not None:
                 try:
                     uploaded_text = str(uploaded_file.read(), "utf-8")
-                    text_input = uploaded_text  # Override the text area content
+                    text_input = uploaded_text
                     st.success(f"File uploaded successfully! ({len(uploaded_text)} characters)")
-                    # Set default title from filename if no title provided
                     if not analysis_title:
                         import os
                         default_title = os.path.splitext(uploaded_file.name)[0]
@@ -1846,13 +1404,7 @@ class StreamlitLLMEntityLinker:
         return text_input, analysis_title or "text_analysis"
 
     def process_text(self, text: str, title: str):
-        """
-        Process the input text using the LLM EntityLinker with contextual analysis and intelligent disambiguation.
-        
-        Args:
-            text: Input text to process
-            title: Analysis title
-        """
+        """Process the input text using the LLM EntityLinker with full intelligence."""
         if not text.strip():
             st.warning("Please enter some text to analyse.")
             return
@@ -1870,13 +1422,13 @@ class StreamlitLLMEntityLinker:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Step 1: analyse text context for better linking
-                status_text.text("Analyzing text context...")
+                # Step 1: LLM context analysis
+                status_text.text("LLM analyzing text context...")
                 progress_bar.progress(10)
                 text_context = self.entity_linker.analyse_text_context(text)
                 
-                # Step 2: Extract entities using LLM (cached)
-                status_text.text("Extracting entities using Gemini LLM...")
+                # Step 2: Extract entities using LLM
+                status_text.text("LLM extracting entities...")
                 progress_bar.progress(25)
                 entities_json = self.cached_extract_entities(text)
                 entities = json.loads(entities_json)
@@ -1885,44 +1437,41 @@ class StreamlitLLMEntityLinker:
                     st.warning("No entities found in the text.")
                     return
                 
-                # Step 3: Link to Getty AAT - FIRST PRIORITY for cultural/architectural terms
+                # Step 3: Link to Getty AAT - FIRST PRIORITY
                 status_text.text("Linking to Getty Art & Architecture Thesaurus...")
                 progress_bar.progress(40)
                 entities = self.entity_linker.link_to_getty_aat(entities)
                 
-                # Step 4: Link to Wikidata - SECOND PRIORITY for general structured data
+                # Step 4: Link to Wikidata - SECOND PRIORITY
                 status_text.text("Linking to Wikidata...")
-                progress_bar.progress(50)
+                progress_bar.progress(55)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_wikidata(entities_json)
                 entities = json.loads(linked_entities_json)
                 
                 # Step 5: Link to Britannica - THIRD PRIORITY
                 status_text.text("Linking to Britannica...")
-                progress_bar.progress(60)
+                progress_bar.progress(70)
                 entities_json = json.dumps(entities, default=str)
                 linked_entities_json = self.cached_link_to_britannica(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 6: LLM-powered Wikipedia disambiguation - LAST RESORT
-                status_text.text("Smart Wikipedia linking with LLM disambiguation...")
-                progress_bar.progress(70)
+                # Step 6: LLM Wikipedia disambiguation - LAST RESORT
+                status_text.text("LLM Wikipedia disambiguation...")
+                progress_bar.progress(80)
                 entities = self.entity_linker.link_to_wikipedia_with_llm_disambiguation(entities, text)
                 
-                # Step 7: Get coordinates
-                status_text.text("Getting coordinates...")
-                progress_bar.progress(80)
-                # Geocode all place entities more aggressively
+                # Step 7: LLM-enhanced geocoding
+                status_text.text("LLM-enhanced geocoding...")
+                progress_bar.progress(90)
                 place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION']]
                 
                 if place_entities:
                     try:
-                        # Use the get_coordinates method which handles multiple geocoding services
                         geocoded_entities = self.entity_linker.get_coordinates(place_entities, text)
                         
                         # Update the entities list with geocoded results
                         for geocoded_entity in geocoded_entities:
-                            # Find the corresponding entity in the main list and update it
                             for idx, entity in enumerate(entities):
                                 if (entity['text'] == geocoded_entity['text'] and 
                                     entity['type'] == geocoded_entity['type'] and
@@ -1931,15 +1480,12 @@ class StreamlitLLMEntityLinker:
                                     break
                     except Exception as e:
                         st.warning(f"Some geocoding failed: {e}")
-                        # Continue with processing even if geocoding fails
                 
                 # Step 8: Link addresses to OpenStreetMap
-                status_text.text("Linking addresses to OpenStreetMap...")
-                progress_bar.progress(90)
                 entities = self.entity_linker.link_to_openstreetmap(entities)
                 
-                # Step 9: Generate visualisation
-                status_text.text("Generating visualisation...")
+                # Step 9: Generate visualization
+                status_text.text("Generating visualization...")
                 progress_bar.progress(100)
                 html_content = self.create_highlighted_html(text, entities)
                 
@@ -1949,28 +1495,28 @@ class StreamlitLLMEntityLinker:
                 st.session_state.html_content = html_content
                 st.session_state.analysis_title = title
                 st.session_state.last_processed_hash = text_hash
-                st.session_state.text_context = text_context  # Store context for reference
+                st.session_state.text_context = text_context
                 
                 # Clear progress indicators
                 progress_bar.empty()
                 status_text.empty()
                 
-                # Show context analysis results and disambiguation stats
+                # Show results summary
                 disambiguation_stats = self._get_disambiguation_stats(entities)
                 
-                if text_context['period'] or text_context['region'] or text_context['subject_matter']:
-                    st.success(f"Processing complete! Found {len(entities)} entities.")
+                st.success(f"Processing complete! Found {len(entities)} entities.")
+                
+                # Show context analysis results
+                if text_context.get('period') or text_context.get('region') or text_context.get('subject_matter'):
                     context_info = []
-                    if text_context['period']:
-                        context_info.append(f"Period: {text_context['period'].replace('_', ' ').title()}")
-                    if text_context['region']:
-                        context_info.append(f"Region: {text_context['region'].replace('_', ' ').title()}")
-                    if text_context['subject_matter']:
-                        context_info.append(f"Subject: {text_context['subject_matter'].title()}")
+                    if text_context.get('period'):
+                        context_info.append(f"Period: {text_context['period']}")
+                    if text_context.get('region'):
+                        context_info.append(f"Region: {text_context['region']}")
+                    if text_context.get('subject_matter'):
+                        context_info.append(f"Subject: {text_context['subject_matter']}")
                     
-                    st.info(f"Context detected: {' | '.join(context_info)}")
-                else:
-                    st.success(f"Processing complete! Found {len(entities)} entities.")
+                    st.info(f"LLM detected context: {' | '.join(context_info)}")
                 
                 # Show disambiguation info
                 if disambiguation_stats['llm_disambiguated'] > 0:
@@ -1997,10 +1543,7 @@ class StreamlitLLMEntityLinker:
         return stats
 
     def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
-        """
-        Create HTML content with highlighted entities for display.
-        Uses a character-by-character replacement approach to avoid position shifting.
-        """
+        """Create HTML content with highlighted entities for display."""
         colors = {
             'PERSON': '#BF7B69',
             'ORGANIZATION': '#9fd2cd',
@@ -2025,7 +1568,8 @@ class StreamlitLLMEntityLinker:
         for entity in entities:
             has_links = (entity.get('britannica_url') or 
                         entity.get('wikidata_url') or 
-                        entity.get('wikipedia_url') or     
+                        entity.get('wikipedia_url') or
+                        entity.get('getty_aat_url') or     
                         entity.get('openstreetmap_url'))
             has_coordinates = entity.get('latitude') is not None
             
@@ -2070,13 +1614,13 @@ class StreamlitLLMEntityLinker:
                     desc = entity['getty_aat_description'][:100]
                     tooltip_parts.append(f"Getty AAT: {desc}")
                 elif entity.get('wikidata_description'):
-                    desc = entity['wikidata_description'][:100]  # Limit description length
+                    desc = entity['wikidata_description'][:100]
                     tooltip_parts.append(f"Description: {desc}")
                 elif entity.get('wikipedia_description'):
                     desc = entity['wikipedia_description'][:100]
                     tooltip_parts.append(f"Description: {desc}")
                 if entity.get('location_name'):
-                    loc = entity['location_name'][:100]  # Limit location length
+                    loc = entity['location_name'][:100]
                     tooltip_parts.append(f"Location: {loc}")
                 if entity.get('disambiguation_method') == 'llm_contextual':
                     tooltip_parts.append("LLM disambiguated")
@@ -2110,7 +1654,7 @@ class StreamlitLLMEntityLinker:
         return ''.join(result)
 
     def render_results(self):
-        """Render the results section with entities and visualisations - enhanced with disambiguation info."""
+        """Render the results section with entities and visualizations."""
         if not st.session_state.entities:
             st.info("Enter some text above and click 'Process Text' to see results.")
             return
@@ -2126,7 +1670,7 @@ class StreamlitLLMEntityLinker:
             <div style="background-color: #E8F4FD; padding: 15px; border-radius: 8px; border-left: 4px solid #2196F3; margin-bottom: 20px;">
                 <strong>Smart Disambiguation Applied</strong><br>
                 The LLM intelligently selected the best Wikipedia links for <strong>{disambiguation_stats['llm_disambiguated']}</strong> entities 
-                by analyzing context, eliminating ambiguous results like "Look up X in Wiktionary" messages.
+                by analyzing context, eliminating ambiguous results.
             </div>
             """, unsafe_allow_html=True)
         
@@ -2140,16 +1684,16 @@ class StreamlitLLMEntityLinker:
         else:
             st.info("No highlighted text available. Process some text first.")
         
-        # Entity details in collapsible section for mobile
+        # Entity details in collapsible section
         with st.expander("Entity Details", expanded=False):
             self.render_entity_table(entities)
         
-        # Export options in collapsible section for mobile
+        # Export options in collapsible section
         with st.expander("Export Results", expanded=False):
             self.render_export_section(entities)
 
     def render_entity_table(self, entities: List[Dict[str, Any]]):
-        """Render a table of entity details - enhanced with disambiguation info."""
+        """Render a table of entity details."""
         if not entities:
             st.info("No entities found.")
             return
@@ -2178,11 +1722,11 @@ class StreamlitLLMEntityLinker:
             
             # Add disambiguation method info
             if entity.get('disambiguation_method') == 'llm_contextual':
-                row['Disambiguation'] = f"LLM (from {entity.get('candidates_considered', 1)} candidates)"
+                row['Method'] = f"LLM ({entity.get('candidates_considered', 1)} candidates)"
             elif entity.get('candidates_considered'):
-                row['Disambiguation'] = f"Auto ({entity.get('candidates_considered', 1)} candidates)"
+                row['Method'] = f"Auto ({entity.get('candidates_considered', 1)} candidates)"
             else:
-                row['Disambiguation'] = "Direct"
+                row['Method'] = "Direct"
             
             table_data.append(row)
         
@@ -2191,7 +1735,7 @@ class StreamlitLLMEntityLinker:
         st.dataframe(df, use_container_width=True)
 
     def format_entity_links(self, entity: Dict[str, Any]) -> str:
-        """Format entity links for display in table - updated priority order."""
+        """Format entity links for display in table."""
         links = []
         if entity.get('getty_aat_url'):
             links.append("Getty AAT")
@@ -2206,12 +1750,11 @@ class StreamlitLLMEntityLinker:
         return " | ".join(links) if links else "No links"
 
     def render_export_section(self, entities: List[Dict[str, Any]]):
-        """Render export options for the results - enhanced with disambiguation metadata."""
-        # Stack buttons vertically for mobile
+        """Render export options for the results."""
         col1, col2 = st.columns(2)
         
         with col1:
-            # JSON export - create JSON-LD format with disambiguation info
+            # JSON export - create JSON-LD format
             json_data = {
                 "@context": "http://schema.org/",
                 "@type": "TextDigitalDocument",
@@ -2237,11 +1780,10 @@ class StreamlitLLMEntityLinker:
                 if entity.get('candidates_considered'):
                     entity_data['candidatesConsidered'] = entity['candidates_considered']
                 
-                # Add Getty AAT link first
+                # Add links in priority order
                 if entity.get('getty_aat_url'):
                     entity_data['sameAs'] = entity['getty_aat_url']
                 
-                # Add Wikidata link
                 if entity.get('wikidata_url'):
                     if 'sameAs' in entity_data:
                         if isinstance(entity_data['sameAs'], str):
@@ -2251,6 +1793,18 @@ class StreamlitLLMEntityLinker:
                     else:
                         entity_data['sameAs'] = entity['wikidata_url']
                 
+                # Add other links
+                for url_key in ['britannica_url', 'wikipedia_url', 'openstreetmap_url']:
+                    if entity.get(url_key):
+                        if 'sameAs' in entity_data:
+                            if isinstance(entity_data['sameAs'], str):
+                                entity_data['sameAs'] = [entity_data['sameAs'], entity[url_key]]
+                            else:
+                                entity_data['sameAs'].append(entity[url_key])
+                        else:
+                            entity_data['sameAs'] = entity[url_key]
+                
+                # Add description
                 if entity.get('getty_aat_description'):
                     entity_data['description'] = entity['getty_aat_description']
                 elif entity.get('wikidata_description'):
@@ -2260,6 +1814,7 @@ class StreamlitLLMEntityLinker:
                 elif entity.get('wikipedia_description'):
                     entity_data['description'] = entity['wikipedia_description']
                 
+                # Add geo data
                 if entity.get('latitude') and entity.get('longitude'):
                     entity_data['geo'] = {
                         "@type": "GeoCoordinates",
@@ -2268,42 +1823,6 @@ class StreamlitLLMEntityLinker:
                     }
                     if entity.get('location_name'):
                         entity_data['geo']['name'] = entity['location_name']
-                
-                if entity.get('getty_aat_url'):
-                    if 'sameAs' in entity_data:
-                        if isinstance(entity_data['sameAs'], str):
-                            entity_data['sameAs'] = [entity_data['sameAs'], entity['getty_aat_url']]
-                        else:
-                            entity_data['sameAs'].append(entity['getty_aat_url'])
-                    else:
-                        entity_data['sameAs'] = entity['getty_aat_url']
-                
-                if entity.get('britannica_url'):
-                    if 'sameAs' in entity_data:
-                        if isinstance(entity_data['sameAs'], str):
-                            entity_data['sameAs'] = [entity_data['sameAs'], entity['britannica_url']]
-                        else:
-                            entity_data['sameAs'].append(entity['britannica_url'])
-                    else:
-                        entity_data['sameAs'] = entity['britannica_url']
-                
-                if entity.get('wikipedia_url'):
-                    if 'sameAs' in entity_data:
-                        if isinstance(entity_data['sameAs'], str):
-                            entity_data['sameAs'] = [entity_data['sameAs'], entity['wikipedia_url']]
-                        else:
-                            entity_data['sameAs'].append(entity['wikipedia_url'])
-                    else:
-                        entity_data['sameAs'] = entity['wikipedia_url']
-                
-                if entity.get('openstreetmap_url'):
-                    if 'sameAs' in entity_data:
-                        if isinstance(entity_data['sameAs'], str):
-                            entity_data['sameAs'] = [entity_data['sameAs'], entity['openstreetmap_url']]
-                        else:
-                            entity_data['sameAs'].append(entity['openstreetmap_url'])
-                    else:
-                        entity_data['sameAs'] = entity['openstreetmap_url']
                 
                 json_data['entities'].append(entity_data)
             
@@ -2318,7 +1837,7 @@ class StreamlitLLMEntityLinker:
             )
         
         with col2:
-            # HTML export - clean version with just the text and proper links
+            # HTML export
             if st.session_state.html_content:
                 html_template = f"""<!DOCTYPE html>
 <html>
@@ -2352,6 +1871,7 @@ class StreamlitLLMEntityLinker:
     <div class="processing-info">
         <strong>Generated by LLM Entity Linker</strong><br>
         Entities extracted and disambiguated using Gemini LLM with intelligent context analysis.
+        No hardcoded bias - fully LLM-driven approach.
     </div>
     {st.session_state.html_content}
 </body>
@@ -2366,14 +1886,13 @@ class StreamlitLLMEntityLinker:
                 )
 
     def run(self):
-        """Main application runner - same as NLTK app."""
+        """Main application runner."""
         # Render header
         self.render_header()
         
         # Render sidebar
         self.render_sidebar()
         
-        # Single column layout for mobile compatibility
         # Input section
         text_input, analysis_title = self.render_input_section()
         
