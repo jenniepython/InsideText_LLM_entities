@@ -329,15 +329,47 @@ Output (JSON array only):
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # Use context-aware prompt
-            prompt = self.construct_ner_prompt(text, context)
+            # SIMPLIFIED PROMPT - much more direct
+            prompt = f"""Extract named entities from this text. Return a JSON array only.
+
+Text: "{text[:1500]}"
+
+Find these entity types:
+- PERSON: People's names (e.g., "John Smith", "Dr. Johnson")
+- ORGANIZATION: Companies, groups, institutions 
+- GPE: Cities, countries, regions (e.g., "London", "England")
+- LOCATION: Geographic places, landmarks
+- FACILITY: Buildings, venues, theaters, institutions
+- ADDRESS: Street addresses
+- DATE: Years, dates, time periods
+- PRODUCT: Objects, tools, equipment
+- WORK_OF_ART: Books, plays, artworks
+- EVENT: Named events
+
+For each entity found, return:
+{{"text": "entity name", "type": "ENTITY_TYPE", "start_pos": 0}}
+
+Return ONLY a JSON array, no other text:
+"""
+            
+            # Use simpler prompt first
             gemini_response = model.generate_content(prompt)
             llm_response = gemini_response.text
             
+            # DEBUG: Show what LLM actually returned
+            st.write("**DEBUG - LLM Raw Response:**")
+            st.code(llm_response[:500] + "..." if len(llm_response) > 500 else llm_response)
+            
             entities_raw = self.extract_json_from_response(llm_response)
+            
+            # DEBUG: Show what JSON parsing found
+            st.write("**DEBUG - Parsed JSON:**")
+            st.write(entities_raw)
+            
             if not entities_raw:
                 st.warning("Could not parse JSON from Gemini response.")
-                return []
+                # Try even simpler approach
+                return self._fallback_entity_extraction(text, model)
             
             # Convert to consistent format and remove duplicates
             entities = []
@@ -372,10 +404,54 @@ Output (JSON array only):
                     }
                     entities.append(entity)
             
+            st.write(f"**DEBUG - Final entities count: {len(entities)}**")
             return entities
             
         except Exception as e:
             st.error(f"Error in LLM entity extraction: {e}")
+            st.exception(e)
+            return []
+
+    def _fallback_entity_extraction(self, text, model):
+        """Super simple fallback entity extraction."""
+        try:
+            simple_prompt = f"""Find people, places and organizations in this text:
+
+Text: {text[:800]}
+
+List them like this:
+Name1|PERSON
+London|GPE  
+Company Name|ORGANIZATION
+
+List only, no other text:"""
+
+            response = model.generate_content(simple_prompt)
+            st.write("**FALLBACK - Raw response:**")
+            st.code(response.text)
+            
+            # Parse simple format
+            entities = []
+            lines = response.text.strip().split('\n')
+            for line in lines:
+                if '|' in line:
+                    parts = line.split('|')
+                    if len(parts) == 2:
+                        name, entity_type = parts[0].strip(), parts[1].strip()
+                        start_pos = text.find(name)
+                        if start_pos >= 0:
+                            entities.append({
+                                'text': name,
+                                'type': entity_type,
+                                'start': start_pos,
+                                'end': start_pos + len(name),
+                                'context': {}
+                            })
+            
+            return entities
+            
+        except Exception as e:
+            st.error(f"Fallback extraction failed: {e}")
             return []
 
     def link_to_getty_aat(self, entities):
