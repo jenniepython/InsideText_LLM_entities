@@ -575,14 +575,6 @@ Respond with JSON array of 2-3 search queries:
             
             # If parsing fails, let LLM try simpler format
             return self._fallback_simple_disambiguation(entity, candidates, full_text)
-                    
-        except Exception as e:
-            print(f"LLM disambiguation failed: {e}")
-            return self._fallback_simple_disambiguation(entity, candidates, full_text)prompt)
-            search_queries = self.extract_json_from_response(response.text)
-            
-            if search_queries and isinstance(search_queries, list):
-                return search_queries
             
         except Exception as e:
             print(f"LLM search query generation failed: {e}")
