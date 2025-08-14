@@ -152,7 +152,11 @@ class LLMEntityLinker:
     def analyse_text_context(self, text: str) -> Dict[str, Any]:
         """Analyse text to determine historical, geographical, and cultural context using LLM intelligence."""
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                st.error("Google Generative AI library not found. Please install it with: pip install google-generativeai")
+                return {}
             
             # Check for API key
             api_key = os.getenv("GEMINI_API_KEY")
@@ -243,7 +247,11 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
     def extract_entities(self, text: str):
         """Extract named entities from text using Gemini LLM with context awareness - processes text directly."""
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                st.error("Google Generative AI library not found. Please install it with: pip install google-generativeai")
+                return []
             
             # Check for API key
             api_key = os.getenv("GEMINI_API_KEY")
@@ -503,7 +511,10 @@ Extract ALL entities you can find. Return ONLY a JSON array, no other text:
     def _create_wikidata_search_queries(self, entity):
         """Use LLM to create intelligent Wikidata search queries."""
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                return [entity['text']]  # Fallback to basic search
             
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
@@ -575,6 +586,14 @@ Respond with JSON array of 2-3 search queries:
             
             # If parsing fails, let LLM try simpler format
             return self._fallback_simple_disambiguation(entity, candidates, full_text)
+                    
+        except Exception as e:
+            print(f"LLM disambiguation failed: {e}")
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)
+            search_queries = self.extract_json_from_response(response.text)
+            
+            if search_queries and isinstance(search_queries, list):
+                return search_queries
             
         except Exception as e:
             print(f"LLM search query generation failed: {e}")
@@ -623,7 +642,16 @@ Respond with JSON array of 2-3 search queries:
     def _llm_select_wikidata_result(self, entity, results, search_query):
         """Use LLM to select the best Wikidata result."""
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                # Fallback to first result
+                result = results[0]
+                return {
+                    'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                    'wikidata_description': result.get('description', ''),
+                    'wikidata_search_query': search_query
+                }
             
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
@@ -803,7 +831,10 @@ Response format: Just the number (1-{len(results)}) or "NONE"
             return candidates[0]
         
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                return candidates[0]  # Fallback to first result
             
             # Check for API key
             api_key = os.getenv("GEMINI_API_KEY")
@@ -922,18 +953,7 @@ Reasoning: [your analysis]
                     
         except Exception as e:
             print(f"LLM disambiguation failed: {e}")
-            return self._fallback_simple_disambiguation(entity, candidates, full_text)prompt)
-            result = response.text.strip()
-            
-            # Parse the LLM response
-            choice_match = re.search(r'Choice:\s*(\d+|NONE)', result, re.IGNORECASE)
-            confidence_match = re.search(r'Confidence:\s*(high|medium|low)', result, re.IGNORECASE)
-            reasoning_match = re.search(r'Reasoning:\s*(.+?)(?:\n|$)', result, re.IGNORECASE | re.DOTALL)
-            
-            if choice_match:
-                choice_str = choice_match.group(1).upper()
-                
-                if choice_str == "NONE":
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)
                     return None
                 
                 try:
@@ -960,7 +980,10 @@ Reasoning: [your analysis]
     def _fallback_simple_disambiguation(self, entity, candidates, full_text):
         """Simplified LLM disambiguation if main method fails."""
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                return candidates[0]
             
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
@@ -1067,7 +1090,10 @@ Which option number (1-{len(candidates)}) best fits this entity in this context?
     def _llm_detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> str:
         """Use LLM to intelligently detect geographical context from the full text."""
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                return ""
             
             # Check for API key
             api_key = os.getenv("GEMINI_API_KEY")
@@ -1123,7 +1149,10 @@ Response (geographical context only):"""
             return False
         
         try:
-            import google.generativeai as genai
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                return self._try_basic_geocoding(entity)
             
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
@@ -1362,15 +1391,15 @@ class StreamlitLLMEntityLinker:
                 <div style="background-color: #C4C3A2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>Input Text</strong>
                 </div>
-                <div style="margin: 10px 0;">↓</div>
+                <div style="margin: 10px 0;">&#8595;</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>Gemini LLM Context Analysis</strong><br><small>First 5000 chars for context</small>
                 </div>
-                <div style="margin: 10px 0;">↓</div>
+                <div style="margin: 10px 0;">&#8595;</div>
                 <div style="background-color: #BF7B69; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>LLM Entity Recognition</strong><br><small>Processes full text</small>
                 </div>
-                <div style="margin: 10px 0;">↓</div>
+                <div style="margin: 10px 0;">&#8595;</div>
                 <div style="text-align: center;">
                     <strong>Intelligent Linking Priority:</strong>
                 </div>
@@ -1388,7 +1417,7 @@ class StreamlitLLMEntityLinker:
                          <strong>Wikipedia</strong><br><small>LLM disambiguated</small>
                     </div>
                 </div>
-                <div style="margin: 10px 0;">↓</div>
+                <div style="margin: 10px 0;">&#8595;</div>
                 <div style="background-color: #F0EAE2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>LLM-Enhanced Geocoding</strong><br><small>Context-aware coordinates</small>
                 </div>
@@ -1399,10 +1428,15 @@ class StreamlitLLMEntityLinker:
     def render_sidebar(self):
         """Render the sidebar with information about LLM approach."""
         st.sidebar.subheader("Enhanced LLM Processing")
-        st.sidebar.info("Context Analysis: First 5,000 characters\nEntity Extraction: Full text processing\nDisambiguation: Extended context analysis")
+        st.sidebar.info("""Context Analysis: First 5,000 characters
+Entity Extraction: Full text processing
+Disambiguation: Extended context analysis""")
         
         st.sidebar.subheader("Linking Priority")
-        st.sidebar.info("1) Getty AAT (cultural/architectural)\n2) Wikidata (structured)\n3) Britannica (scholarly)\n4) Wikipedia (with LLM disambiguation)")
+        st.sidebar.info("""1) Getty AAT (cultural/architectural)
+2) Wikidata (structured)
+3) Britannica (scholarly)
+4) Wikipedia (with LLM disambiguation)""")
 
     def render_input_section(self):
         """Render the text input section."""
@@ -1509,6 +1543,9 @@ class StreamlitLLMEntityLinker:
                     
                     st.info(f"LLM detected context: {' | '.join(context_info)} (analyzed {analyzed_chars:,}/{total_chars:,} chars)")
                 
+                # Store context for later use
+                st.session_state.text_context = text_context
+                
                 # Step 2: Extract entities using LLM (FULL TEXT)
                 status_text.text("LLM extracting entities from full text...")
                 progress_bar.progress(25)
@@ -1581,7 +1618,7 @@ class StreamlitLLMEntityLinker:
                 st.session_state.html_content = html_content
                 st.session_state.analysis_title = title
                 st.session_state.last_processed_hash = text_hash
-                st.session_state.text_context = text_context
+                # text_context already stored above
                 
                 # Clear progress indicators
                 progress_bar.empty()
@@ -1879,7 +1916,7 @@ class StreamlitLLMEntityLinker:
         with col1:
             # JSON export - create JSON-LD format
             text_length = len(st.session_state.processed_text)
-            context_info = st.session_state.get('text_context', {})
+            context_info = getattr(st.session_state, 'text_context', {})
             
             json_data = {
                 "@context": "http://schema.org/",
@@ -1977,7 +2014,7 @@ class StreamlitLLMEntityLinker:
         with col2:
             # HTML export
             if st.session_state.html_content:
-                context_info = st.session_state.get('text_context', {})
+                context_info = getattr(st.session_state, 'text_context', {})
                 text_length = len(st.session_state.processed_text)
                 
                 html_template = f"""<!DOCTYPE html>
