@@ -6,7 +6,7 @@ A web interface for entity extraction using LLM (Gemini) with intelligent linkin
 This application uses LLM for both entity extraction AND intelligent disambiguation throughout.
 
 Author: Enhanced LLM-driven version
-Version: 4.0 - Fully LLM-driven, no hardcoded bias
+Version: 4.1 - Extended text processing with 5000 char context limit
 """
 
 import streamlit as st
@@ -163,10 +163,14 @@ class LLMEntityLinker:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
+            # Use first 5000 characters for context analysis but note full text length
+            context_sample = text[:5000]
+            full_text_length = len(text)
+            
             # Let the LLM analyze the context without any hardcoded assumptions
             prompt = f"""Analyze this text to determine its context for entity disambiguation purposes.
 
-TEXT: "{text[:1500]}..."
+TEXT SAMPLE (first 5000 chars of {full_text_length} total): "{context_sample}{'...' if full_text_length > 5000 else ''}"
 
 Provide a comprehensive analysis covering:
 
@@ -193,7 +197,9 @@ Respond in this EXACT JSON format:
     "place_indicators": ["list", "of", "geographical", "clues"],
     "subject_indicators": ["list", "of", "topical", "clues"],
     "confidence": "high|medium|low",
-    "reasoning": "brief explanation of analysis"
+    "reasoning": "brief explanation of analysis",
+    "text_length_analyzed": {len(context_sample)},
+    "total_text_length": {full_text_length}
 }}
 
 Focus on being accurate and unbiased. If uncertain about any aspect, use null or indicate low confidence.
@@ -225,7 +231,9 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
                 'subject_indicators': context.get('subject_indicators', []),
                 'confidence': context.get('confidence', 'medium'),
                 'reasoning': context.get('reasoning', 'LLM-based analysis'),
-                'analysis_method': 'llm_driven'
+                'analysis_method': 'llm_driven',
+                'text_length_analyzed': len(context_sample),
+                'total_text_length': full_text_length
             }
             
         except Exception as e:
@@ -245,75 +253,52 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
             'subject_indicators': [],
             'confidence': 'low',
             'reasoning': 'Fallback - LLM analysis unavailable',
-            'analysis_method': 'fallback'
+            'analysis_method': 'fallback',
+            'text_length_analyzed': 0,
+            'total_text_length': 0
         }
 
-    def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
-        """Construct a context-aware NER prompt that adapts to detected context."""
+    def chunk_text_for_processing(self, text: str, chunk_size: int = 8000, overlap: int = 500):
+        """Split long text into overlapping chunks for processing."""
+        if len(text) <= chunk_size:
+            return [text]
         
-        # Analyse context if not provided
-        if context is None:
-            context = self.analyse_text_context(text)
+        chunks = []
+        start = 0
         
-        # Create dynamic context instructions based on LLM-detected patterns
-        context_instructions = ""
+        while start < len(text):
+            end = start + chunk_size
+            
+            # If this isn't the last chunk, try to break at a sentence boundary
+            if end < len(text):
+                # Look for sentence endings in the last 200 characters of the chunk
+                search_start = max(start + chunk_size - 200, start)
+                sentence_endings = []
+                
+                for i in range(search_start, min(end, len(text))):
+                    if text[i] in '.!?':
+                        sentence_endings.append(i + 1)
+                
+                if sentence_endings:
+                    # Use the last sentence ending as the chunk boundary
+                    end = sentence_endings[-1]
+            
+            chunk = text[start:end]
+            chunks.append({
+                'text': chunk,
+                'start_offset': start,
+                'end_offset': end
+            })
+            
+            # Next chunk starts with overlap
+            start = end - overlap
+            if start >= len(text):
+                break
         
-        if context.get('period'):
-            context_instructions += f"\nDETECTED PERIOD: {context['period']}\n"
-            if context['period'] in ['ancient', 'classical']:
-                context_instructions += "- Interpret names as historical entities, not modern companies\n"
-                context_instructions += "- Ancient peoples = civilizations (ORGANIZATION)\n"
-                context_instructions += "- Historical figures = PERSON\n"
-        
-        if context.get('region'):
-            context_instructions += f"\nDETECTED REGION: {context['region']}\n"
-            context_instructions += "- Interpret place names in appropriate cultural context\n"
-        
-        if context.get('subject_matter'):
-            context_instructions += f"\nDETECTED SUBJECT: {context['subject_matter']}\n"
-            if context['subject_matter'] == 'theater':
-                context_instructions += "- Theater terminology = technical features (PRODUCT)\n"
-                context_instructions += "- Theater names = performance venues (FACILITY)\n"
-            elif context['subject_matter'] == 'architecture':
-                context_instructions += "- Building components = architectural products (PRODUCT)\n"
-                context_instructions += "- Building names = facilities (FACILITY)\n"
-        
-        prompt = f"""You are an expert named entity recognition system that adapts to different text types and contexts. 
-
-CONTEXT ANALYSIS:
-{context_instructions}
-
-Your task is to identify and extract ALL relevant entities while interpreting them correctly based on the detected context.
-
-ENTITY TYPES:
-- PERSON: Individual people, historical figures, characters, roles with names
-- ORGANIZATION: Named groups, institutions, civilizations, companies, teams
-- GPE: Cities, countries, regions, kingdoms, territories, political entities
-- LOCATION: Geographic places, landmarks, natural features
-- FACILITY: Buildings, venues, structures, stages, theaters
-- ADDRESS: Street addresses, property descriptions
-- PRODUCT: Objects, tools, components, materials, technical features
-- EVENT: Named events, ceremonies, performances, battles
-- WORK_OF_ART: Books, plays, poems, manuscripts, artworks
-- LANGUAGE: Languages, dialects, scripts
-- LAW: Legal documents, laws, regulations
-- DATE: Specific dates, periods, years, eras, reigns
-- MONEY: Currencies, amounts, prices
-
-RULES:
-1. Only extract proper nouns and named entities
-2. Avoid tagging adjectives or modifiers unless they refer to people as a group
-3. Consider the detected context when interpreting ambiguous names
-4. Extract entities that are clearly identifiable and meaningful
-
-Text: "{text}"
-
-Output (JSON array only):
-"""
-        return prompt
+        return chunks
 
     def extract_entities(self, text: str):
-        """Extract named entities from text using Gemini LLM with context awareness."""
+        """Extract named entities from text using Gemini LLM with context awareness - processes ALL text."""
         try:
             import google.generativeai as genai
             
@@ -323,16 +308,54 @@ Output (JSON array only):
                 st.error("GEMINI_API_KEY environment variable not found!")
                 return []
             
-            # First, analyse the text context
+            # First, analyse the text context using 5000 char sample
             context = self.analyse_text_context(text)
             
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # SIMPLIFIED PROMPT - much more direct
-            prompt = f"""Extract named entities from this text. Return a JSON array only.
+            # If text is short enough, process it all at once
+            if len(text) <= 10000:
+                return self._extract_entities_single_pass(text, context, model)
+            
+            # For longer texts, use chunking
+            st.info(f"Processing long text ({len(text):,} characters) in chunks...")
+            chunks = self.chunk_text_for_processing(text)
+            all_entities = []
+            
+            for i, chunk_info in enumerate(chunks):
+                st.write(f"Processing chunk {i+1}/{len(chunks)}...")
+                
+                chunk_entities = self._extract_entities_single_pass(
+                    chunk_info['text'], 
+                    context, 
+                    model
+                )
+                
+                # Adjust entity positions to account for chunk offset
+                for entity in chunk_entities:
+                    entity['start'] += chunk_info['start_offset']
+                    entity['end'] += chunk_info['start_offset']
+                    entity['chunk_number'] = i + 1
+                
+                all_entities.extend(chunk_entities)
+            
+            # Remove duplicate entities that may appear across chunk boundaries
+            all_entities = self._deduplicate_entities(all_entities)
+            
+            return all_entities
+            
+        except Exception as e:
+            st.error(f"Error in LLM entity extraction: {e}")
+            st.exception(e)
+            return []
 
-Text: "{text[:1500]}"
+    def _extract_entities_single_pass(self, text: str, context: Dict[str, Any], model):
+        """Extract entities from a single text passage."""
+        # SIMPLIFIED PROMPT - much more direct
+        prompt = f"""Extract ALL named entities from this text. Return a JSON array only.
+
+Text: "{text}"
 
 Find these entity types:
 - PERSON: People's names (e.g., "John Smith", "Dr. Johnson")
@@ -349,75 +372,90 @@ Find these entity types:
 For each entity found, return:
 {{"text": "entity name", "type": "ENTITY_TYPE", "start_pos": 0}}
 
-Return ONLY a JSON array, no other text:
+Extract ALL entities you can find. Return ONLY a JSON array, no other text:
 """
+        
+        # Use simpler prompt
+        gemini_response = model.generate_content(prompt)
+        llm_response = gemini_response.text
+        
+        entities_raw = self.extract_json_from_response(llm_response)
+        
+        if not entities_raw:
+            st.warning("Could not parse JSON from Gemini response.")
+            # Try even simpler approach
+            return self._fallback_entity_extraction(text, model)
+        
+        # Convert to consistent format and remove duplicates
+        entities = []
+        seen_entities = set()  # Track (text, type) pairs to avoid duplicates
+        
+        for entity_raw in entities_raw:
+            if 'text' in entity_raw and 'type' in entity_raw:
+                entity_text = entity_raw['text'].strip()
+                entity_type = entity_raw['type']
+                
+                # Create unique key for duplicate detection
+                unique_key = (entity_text.lower(), entity_type)
+                
+                # Skip if we've already seen this entity
+                if unique_key in seen_entities:
+                    continue
+                
+                seen_entities.add(unique_key)
+                
+                # Find actual position in text
+                start_pos = text.find(entity_text)
+                if start_pos == -1:
+                    # Try with start_pos from LLM if provided
+                    start_pos = entity_raw.get('start_pos', 0)
+                
+                entity = {
+                    'text': entity_text,
+                    'type': entity_type,
+                    'start': start_pos,
+                    'end': start_pos + len(entity_text),
+                    'context': context  # Store context for linking
+                }
+                entities.append(entity)
+        
+        return entities
+
+    def _deduplicate_entities(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove duplicate entities that may appear across chunk boundaries."""
+        unique_entities = []
+        seen_entities = set()
+        
+        # Sort entities by start position
+        entities.sort(key=lambda x: x['start'])
+        
+        for entity in entities:
+            # Create a key for deduplication
+            key = (entity['text'].lower(), entity['type'])
             
-            # Use simpler prompt first
-            gemini_response = model.generate_content(prompt)
-            llm_response = gemini_response.text
+            # Check for near-duplicate positions (within 50 characters)
+            is_duplicate = False
+            for existing_entity in unique_entities:
+                if (existing_entity['text'].lower() == entity['text'].lower() and 
+                    existing_entity['type'] == entity['type'] and
+                    abs(existing_entity['start'] - entity['start']) <= 50):
+                    is_duplicate = True
+                    break
             
-            # DEBUG: Show what LLM actually returned
-            st.write("**DEBUG - LLM Raw Response:**")
-            st.code(llm_response[:500] + "..." if len(llm_response) > 500 else llm_response)
-            
-            entities_raw = self.extract_json_from_response(llm_response)
-            
-            # DEBUG: Show what JSON parsing found
-            st.write("**DEBUG - Parsed JSON:**")
-            st.write(entities_raw)
-            
-            if not entities_raw:
-                st.warning("Could not parse JSON from Gemini response.")
-                # Try even simpler approach
-                return self._fallback_entity_extraction(text, model)
-            
-            # Convert to consistent format and remove duplicates
-            entities = []
-            seen_entities = set()  # Track (text, type) pairs to avoid duplicates
-            
-            for entity_raw in entities_raw:
-                if 'text' in entity_raw and 'type' in entity_raw:
-                    entity_text = entity_raw['text'].strip()
-                    entity_type = entity_raw['type']
-                    
-                    # Create unique key for duplicate detection
-                    unique_key = (entity_text.lower(), entity_type)
-                    
-                    # Skip if we've already seen this entity
-                    if unique_key in seen_entities:
-                        continue
-                    
-                    seen_entities.add(unique_key)
-                    
-                    # Find actual position in text
-                    start_pos = text.find(entity_text)
-                    if start_pos == -1:
-                        # Try with start_pos from LLM if provided
-                        start_pos = entity_raw.get('start_pos', 0)
-                    
-                    entity = {
-                        'text': entity_text,
-                        'type': entity_type,
-                        'start': start_pos,
-                        'end': start_pos + len(entity_text),
-                        'context': context  # Store context for linking
-                    }
-                    entities.append(entity)
-            
-            st.write(f"**DEBUG - Final entities count: {len(entities)}**")
-            return entities
-            
-        except Exception as e:
-            st.error(f"Error in LLM entity extraction: {e}")
-            st.exception(e)
-            return []
+            if not is_duplicate:
+                unique_entities.append(entity)
+        
+        return unique_entities
 
     def _fallback_entity_extraction(self, text, model):
         """Super simple fallback entity extraction."""
         try:
+            # Limit fallback to first 2000 chars to avoid token limits
+            text_sample = text[:2000]
+            
             simple_prompt = f"""Find people, places and organizations in this text:
 
-Text: {text[:800]}
+Text: {text_sample}
 
 List them like this:
 Name1|PERSON
@@ -427,8 +465,6 @@ Company Name|ORGANIZATION
 List only, no other text:"""
 
             response = model.generate_content(simple_prompt)
-            st.write("**FALLBACK - Raw response:**")
-            st.code(response.text)
             
             # Parse simple format
             entities = []
@@ -894,9 +930,9 @@ Response format: Just the number (1-{len(results)}) or "NONE"
             # Get entity context from the LLM-driven analysis
             entity_context = entity.get('context', {})
             
-            # Get broader context snippet around the entity
-            start = max(0, entity['start'] - 300)
-            end = min(len(full_text), entity['end'] + 300)
+            # Get broader context snippet around the entity (up to 1000 chars)
+            start = max(0, entity['start'] - 500)
+            end = min(len(full_text), entity['end'] + 500)
             local_context = full_text[start:end]
             
             # Prepare candidates for LLM with clean formatting
@@ -911,12 +947,15 @@ Response format: Just the number (1-{len(results)}) or "NONE"
                     f"   Description: {description}\n"
                 )
             
+            # Use up to 5000 chars for disambiguation context
+            context_sample = full_text[:5000]
+            
             # Clean, unbiased prompt that trusts LLM intelligence
             prompt = f"""You are an expert at disambiguating Wikipedia links using contextual analysis.
 
 ENTITY TO DISAMBIGUATE: "{entity['text']}" (Entity Type: {entity['type']})
 
-FULL TEXT CONTEXT: "{full_text[:2000]}..."
+FULL TEXT CONTEXT (first 5000 chars): "{context_sample}{'...' if len(full_text) > 5000 else ''}"
 
 LOCAL CONTEXT AROUND ENTITY: "...{local_context}..."
 
@@ -1007,11 +1046,11 @@ Reasoning: [your analysis]
             if not api_key:
                 return candidates[0]
             
-            # Super simple prompt as backup
+            # Super simple prompt as backup - use first 2000 chars
             candidates_simple = [f"{i+1}. {c['title']}: {c['description'][:200]}" 
                                for i, c in enumerate(candidates)]
             
-            simple_prompt = f"""Text context: "{full_text[:1000]}..."
+            simple_prompt = f"""Text context: "{full_text[:2000]}..."
 Entity: "{entity['text']}"
 Options: {chr(10).join(candidates_simple)}
 
@@ -1076,7 +1115,7 @@ Which option number (1-{len(candidates)}) best fits this entity in this context?
 
     def get_coordinates(self, entities, processed_text=""):
         """Enhanced coordinate lookup with LLM-powered geographical context detection."""
-        # Use LLM to detect geographical context from the full text
+        # Use LLM to detect geographical context from the full text (first 5000 chars)
         geographical_context = self._llm_detect_geographical_context(processed_text, entities)
         
         if geographical_context:
@@ -1113,9 +1152,12 @@ Which option number (1-{len(candidates)}) best fits this entity in this context?
             # Extract place entities for context
             place_entities = [e['text'] for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY']]
             
+            # Use first 2000 chars for geographical context detection
+            context_sample = text[:2000]
+            
             prompt = f"""Analyze this text to determine the PRIMARY geographical context for geocoding purposes.
 
-TEXT: "{text[:1000]}..."
+TEXT SAMPLE: "{context_sample}{'...' if len(text) > 2000 else ''}"
 
 PLACE ENTITIES FOUND: {', '.join(place_entities)}
 
@@ -1162,12 +1204,17 @@ Response (geographical context only):"""
             if not api_key:
                 return self._try_basic_geocoding(entity)
             
+            # Get local context around the entity (up to 400 chars)
+            start = max(0, entity['start'] - 200)
+            end = min(len(full_text), entity['end'] + 200)
+            local_context = full_text[start:end]
+            
             # Let LLM decide how to adapt context for modern geocoding
             prompt = f"""You need to help geocode a location for mapping purposes.
 
 ENTITY: "{entity['text']}" (Type: {entity['type']})
 DETECTED CONTEXT: "{geographical_context}"
-SURROUNDING TEXT: "{full_text[max(0, entity['start']-200):entity['end']+200]}"
+SURROUNDING TEXT: "{local_context}"
 
 TASK: Create 2-3 search terms that would help find the correct modern location for mapping this entity.
 
@@ -1388,15 +1435,15 @@ class StreamlitLLMEntityLinker:
         <div style="background-color: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #E0D7C0;">
             <div style="text-align: center; margin-bottom: 20px;">
                 <div style="background-color: #C4C3A2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>Input Text</strong>
+                     <strong>Input Text (All Length)</strong>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>Gemini LLM Context Analysis</strong>
+                     <strong>Gemini LLM Context Analysis</strong><br><small>First 5000 chars for context</small>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #BF7B69; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>LLM Entity Recognition</strong><br><small>Context-aware extraction</small>
+                     <strong>LLM Entity Recognition</strong><br><small>Processes FULL text with chunking</small>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="text-align: center;">
@@ -1426,8 +1473,8 @@ class StreamlitLLMEntityLinker:
 
     def render_sidebar(self):
         """Render the sidebar with information about LLM approach."""
-        st.sidebar.subheader("LLM-Driven Approach")
-        st.sidebar.info("This system uses Gemini LLM throughout the entire pipeline for maximum intelligence and zero hardcoded bias. Context analysis, entity extraction, disambiguation, and geocoding are all powered by LLM understanding.")
+        st.sidebar.subheader("Enhanced LLM Processing")
+        st.sidebar.info(" Context Analysis: First 5,000 characters\n Entity Extraction: FULL text with intelligent chunking\n Disambiguation: Extended context (5,000 chars)\n No length restrictions on processing")
         
         st.sidebar.subheader("Linking Priority")
         st.sidebar.info("1) Getty AAT (cultural/architectural) 2) Wikidata (structured) 3) Britannica (scholarly) 4) Wikipedia (with LLM disambiguation)")
@@ -1447,9 +1494,16 @@ class StreamlitLLMEntityLinker:
         text_input = st.text_area(
             "Enter your text here:",
             height=200,
-            placeholder="Paste your text here for entity extraction...",
-            help="You can edit this text or replace it with your own content"
+            placeholder="Paste your text here for entity extraction... (No length limit - full text will be processed)",
+            help="You can edit this text or replace it with your own content. The system will process the entire text regardless of length."
         )
+        
+        # Show character count
+        if text_input:
+            char_count = len(text_input)
+            st.caption(f"Text length: {char_count:,} characters")
+            if char_count > 10000:
+                st.info("Long text detected - will be processed in intelligent chunks with overlap for comprehensive analysis.")
         
         # File upload option in expander
         with st.expander("Or upload a text file"):
@@ -1463,7 +1517,10 @@ class StreamlitLLMEntityLinker:
                 try:
                     uploaded_text = str(uploaded_file.read(), "utf-8")
                     text_input = uploaded_text
-                    st.success(f"File uploaded successfully! ({len(uploaded_text)} characters)")
+                    char_count = len(uploaded_text)
+                    st.success(f"File uploaded successfully! ({char_count:,} characters)")
+                    if char_count > 10000:
+                        st.info("Large file detected - will be processed in intelligent chunks.")
                     if not analysis_title:
                         import os
                         default_title = os.path.splitext(uploaded_file.name)[0]
@@ -1498,20 +1555,39 @@ class StreamlitLLMEntityLinker:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
-                # Step 1: LLM context analysis
-                status_text.text("LLM analyzing text context...")
+                # Step 1: LLM context analysis (5000 char sample)
+                status_text.text("LLM analyzing text context (first 5000 chars)...")
                 progress_bar.progress(10)
                 text_context = self.entity_linker.analyse_text_context(text)
                 
-                # Step 2: Extract entities using LLM
-                status_text.text("LLM extracting entities...")
+                # Show context analysis results early
+                if text_context.get('period') or text_context.get('region') or text_context.get('subject_matter'):
+                    context_info = []
+                    if text_context.get('period'):
+                        context_info.append(f"Period: {text_context['period']}")
+                    if text_context.get('region'):
+                        context_info.append(f"Region: {text_context['region']}")
+                    if text_context.get('subject_matter'):
+                        context_info.append(f"Subject: {text_context['subject_matter']}")
+                    
+                    analyzed_chars = text_context.get('text_length_analyzed', 0)
+                    total_chars = text_context.get('total_text_length', len(text))
+                    
+                    st.info(f"LLM detected context: {' | '.join(context_info)} (analyzed {analyzed_chars:,}/{total_chars:,} chars)")
+                
+                # Step 2: Extract entities using LLM (FULL TEXT)
+                status_text.text("LLM extracting entities from full text...")
                 progress_bar.progress(25)
                 entities_json = self.cached_extract_entities(text)
                 entities = json.loads(entities_json)
                 
                 if not entities:
                     st.warning("No entities found in the text.")
+                    progress_bar.empty()
+                    status_text.empty()
                     return
+                
+                st.success(f"Found {len(entities)} entities in text")
                 
                 # Step 3: Link to Getty AAT - FIRST PRIORITY
                 status_text.text("Linking to Getty Art & Architecture Thesaurus...")
@@ -1579,20 +1655,36 @@ class StreamlitLLMEntityLinker:
                 
                 # Show results summary
                 disambiguation_stats = self._get_disambiguation_stats(entities)
+                linking_stats = self._get_linking_stats(entities)
                 
-                st.success(f"Processing complete! Found {len(entities)} entities.")
+                st.success(f"Processing complete! Found {len(entities)} entities with {linking_stats['total_linked']} linked.")
                 
-                # Show context analysis results
-                if text_context.get('period') or text_context.get('region') or text_context.get('subject_matter'):
-                    context_info = []
-                    if text_context.get('period'):
-                        context_info.append(f"Period: {text_context['period']}")
-                    if text_context.get('region'):
-                        context_info.append(f"Region: {text_context['region']}")
-                    if text_context.get('subject_matter'):
-                        context_info.append(f"Subject: {text_context['subject_matter']}")
+                # Show detailed stats
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Total Entities", len(entities))
+                
+                with col2:
+                    st.metric("Linked Entities", linking_stats['total_linked'])
+                
+                with col3:
+                    geocoded_count = len([e for e in entities if e.get('latitude')])
+                    st.metric("Geocoded", geocoded_count)
+                
+                # Show link type breakdown
+                if linking_stats['total_linked'] > 0:
+                    link_breakdown = []
+                    if linking_stats['getty_aat'] > 0:
+                        link_breakdown.append(f"Getty AAT: {linking_stats['getty_aat']}")
+                    if linking_stats['wikidata'] > 0:
+                        link_breakdown.append(f"Wikidata: {linking_stats['wikidata']}")
+                    if linking_stats['britannica'] > 0:
+                        link_breakdown.append(f"Britannica: {linking_stats['britannica']}")
+                    if linking_stats['wikipedia'] > 0:
+                        link_breakdown.append(f"Wikipedia: {linking_stats['wikipedia']}")
                     
-                    st.info(f"LLM detected context: {' | '.join(context_info)}")
+                    st.info(f"🔗 Link sources: {' | '.join(link_breakdown)}")
                 
                 # Show disambiguation info
                 if disambiguation_stats['llm_disambiguated'] > 0:
@@ -1618,8 +1710,43 @@ class StreamlitLLMEntityLinker:
         
         return stats
 
+    def _get_linking_stats(self, entities):
+        """Get statistics about linking success."""
+        stats = {
+            'total_linked': 0,
+            'getty_aat': 0,
+            'wikidata': 0,
+            'britannica': 0,
+            'wikipedia': 0,
+            'openstreetmap': 0
+        }
+        
+        for entity in entities:
+            has_link = False
+            
+            if entity.get('getty_aat_url'):
+                stats['getty_aat'] += 1
+                has_link = True
+            if entity.get('wikidata_url'):
+                stats['wikidata'] += 1
+                has_link = True
+            if entity.get('britannica_url'):
+                stats['britannica'] += 1
+                has_link = True
+            if entity.get('wikipedia_url'):
+                stats['wikipedia'] += 1
+                has_link = True
+            if entity.get('openstreetmap_url'):
+                stats['openstreetmap'] += 1
+                has_link = True
+            
+            if has_link:
+                stats['total_linked'] += 1
+        
+        return stats
+
     def create_highlighted_html(self, text: str, entities: List[Dict[str, Any]]) -> str:
-        """Create HTML content with highlighted entities for display."""
+        """Create HTML content with highlighted entities for display - HIGHLIGHT ALL ENTITIES."""
         colors = {
             'PERSON': '#BF7B69',
             'ORGANIZATION': '#9fd2cd',
@@ -1640,18 +1767,8 @@ class StreamlitLLMEntityLinker:
         # Create a list to track which characters belong to which entity
         char_entity_map = [None] * len(text)
         
-        # Map each character position to its entity (if any)
+        # Map each character position to its entity (if any) - HIGHLIGHT ALL ENTITIES, NOT JUST LINKED ONES
         for entity in entities:
-            has_links = (entity.get('britannica_url') or 
-                        entity.get('wikidata_url') or 
-                        entity.get('wikipedia_url') or
-                        entity.get('getty_aat_url') or     
-                        entity.get('openstreetmap_url'))
-            has_coordinates = entity.get('latitude') is not None
-            
-            if not (has_links or has_coordinates):
-                continue
-                
             start = entity.get('start', -1)
             end = entity.get('end', -1)
             
@@ -1659,7 +1776,7 @@ class StreamlitLLMEntityLinker:
             if start < 0 or end > len(text) or start >= end:
                 continue
                 
-            # Mark characters as belonging to this entity
+            # Mark characters as belonging to this entity - HIGHLIGHT ALL
             for i in range(start, min(end, len(text))):
                 if char_entity_map[i] is None:  # Don't overwrite existing entities
                     char_entity_map[i] = entity
@@ -1700,6 +1817,8 @@ class StreamlitLLMEntityLinker:
                     tooltip_parts.append(f"Location: {loc}")
                 if entity.get('disambiguation_method') == 'llm_contextual':
                     tooltip_parts.append("LLM disambiguated")
+                if entity.get('chunk_number'):
+                    tooltip_parts.append(f"Chunk: {entity['chunk_number']}")
                 
                 tooltip = html_module.escape(" | ".join(tooltip_parts))
                 
@@ -1718,6 +1837,7 @@ class StreamlitLLMEntityLinker:
                         f'target="_blank" title="{tooltip}">{escaped_text}</a>'
                     )
                 else:
+                    # HIGHLIGHT ALL ENTITIES, even without links
                     result.append(
                         f'<span style="background-color: {color}; padding: 2px 4px; '
                         f'border-radius: 3px;" title="{tooltip}">{escaped_text}</span>'
@@ -1739,20 +1859,52 @@ class StreamlitLLMEntityLinker:
         
         st.header("Results")
         
-        # Show disambiguation statistics
+        # Show enhanced statistics
         disambiguation_stats = self._get_disambiguation_stats(entities)
+        linking_stats = self._get_linking_stats(entities)
+        
+        # Enhanced statistics display
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Entities", len(entities))
+        
+        with col2:
+            st.metric("Linked", linking_stats['total_linked'])
+        
+        with col3:
+            geocoded_count = len([e for e in entities if e.get('latitude')])
+            st.metric("Geocoded", geocoded_count)
+        
+        with col4:
+            chunked_entities = len([e for e in entities if e.get('chunk_number')])
+            if chunked_entities > 0:
+                st.metric("From Chunks", chunked_entities)
+            else:
+                st.metric("LLM Disambiguated", disambiguation_stats['llm_disambiguated'])
+        
+        # Show processing info if text was chunked
+        if any(e.get('chunk_number') for e in entities):
+            chunks_used = len(set(e.get('chunk_number') for e in entities if e.get('chunk_number')))
+            st.info(f"Long text processed in {chunks_used} intelligent chunks with overlap to ensure comprehensive coverage.")
+        
+        # Show disambiguation statistics
         if disambiguation_stats['llm_disambiguated'] > 0:
             st.markdown(f"""
             <div style="background-color: #E8F4FD; padding: 15px; border-radius: 8px; border-left: 4px solid #2196F3; margin-bottom: 20px;">
                 <strong>Smart Disambiguation Applied</strong><br>
                 The LLM intelligently selected the best Wikipedia links for <strong>{disambiguation_stats['llm_disambiguated']}</strong> entities 
-                by analyzing context, eliminating ambiguous results.
+                by analyzing the full context (up to 5,000 characters), eliminating ambiguous results.
             </div>
             """, unsafe_allow_html=True)
         
         # Highlighted text
         st.subheader("Highlighted Text")
         if st.session_state.html_content:
+            # Show text length info
+            text_length = len(st.session_state.processed_text)
+            st.caption(f"Text length: {text_length:,} characters - All entities highlighted regardless of links")
+            
             st.markdown(
                 st.session_state.html_content,
                 unsafe_allow_html=True
@@ -1784,17 +1936,17 @@ class StreamlitLLMEntityLinker:
             }
             
             if entity.get('getty_aat_description'):
-                row['Description'] = entity['getty_aat_description']
+                row['Description'] = entity['getty_aat_description'][:100] + '...' if len(entity['getty_aat_description']) > 100 else entity['getty_aat_description']
             elif entity.get('wikidata_description'):
-                row['Description'] = entity['wikidata_description']
+                row['Description'] = entity['wikidata_description'][:100] + '...' if len(entity['wikidata_description']) > 100 else entity['wikidata_description']
             elif entity.get('britannica_title'):
                 row['Description'] = entity['britannica_title']
             elif entity.get('wikipedia_description'):
-                row['Description'] = entity['wikipedia_description']
+                row['Description'] = entity['wikipedia_description'][:100] + '...' if len(entity['wikipedia_description']) > 100 else entity['wikipedia_description']
             
             if entity.get('latitude'):
                 row['Coordinates'] = f"{entity['latitude']:.4f}, {entity['longitude']:.4f}"
-                row['Location'] = entity.get('location_name', '')
+                row['Location'] = entity.get('location_name', '')[:50] + '...' if len(entity.get('location_name', '')) > 50 else entity.get('location_name', '')
             
             # Add disambiguation method info
             if entity.get('disambiguation_method') == 'llm_contextual':
@@ -1803,6 +1955,12 @@ class StreamlitLLMEntityLinker:
                 row['Method'] = f"Auto ({entity.get('candidates_considered', 1)} candidates)"
             else:
                 row['Method'] = "Direct"
+            
+            # Add chunk info if available
+            if entity.get('chunk_number'):
+                row['Source'] = f"Chunk {entity['chunk_number']}"
+            else:
+                row['Source'] = "Main text"
             
             table_data.append(row)
         
@@ -1831,6 +1989,9 @@ class StreamlitLLMEntityLinker:
         
         with col1:
             # JSON export - create JSON-LD format
+            text_length = len(st.session_state.processed_text)
+            context_info = st.session_state.get('text_context', {})
+            
             json_data = {
                 "@context": "http://schema.org/",
                 "@type": "TextDigitalDocument",
@@ -1838,6 +1999,16 @@ class StreamlitLLMEntityLinker:
                 "dateCreated": str(pd.Timestamp.now().isoformat()),
                 "title": st.session_state.analysis_title,
                 "processingMethod": "LLM entity extraction with intelligent disambiguation",
+                "textLength": text_length,
+                "contextAnalysis": {
+                    "period": context_info.get('period'),
+                    "region": context_info.get('region'),
+                    "culture": context_info.get('culture'),
+                    "subjectMatter": context_info.get('subject_matter'),
+                    "confidence": context_info.get('confidence'),
+                    "charactersAnalyzed": context_info.get('text_length_analyzed', 0),
+                    "totalCharacters": context_info.get('total_text_length', text_length)
+                },
                 "entities": []
             }
             
@@ -1849,6 +2020,10 @@ class StreamlitLLMEntityLinker:
                     "startOffset": entity['start'],
                     "endOffset": entity['end']
                 }
+                
+                # Add chunk info if available
+                if entity.get('chunk_number'):
+                    entity_data['sourceChunk'] = entity['chunk_number']
                 
                 # Add disambiguation metadata
                 if entity.get('disambiguation_method'):
@@ -1899,6 +2074,8 @@ class StreamlitLLMEntityLinker:
                     }
                     if entity.get('location_name'):
                         entity_data['geo']['name'] = entity['location_name']
+                    if entity.get('geocoding_source'):
+                        entity_data['geo']['source'] = entity['geocoding_source']
                 
                 json_data['entities'].append(entity_data)
             
@@ -1915,6 +2092,9 @@ class StreamlitLLMEntityLinker:
         with col2:
             # HTML export
             if st.session_state.html_content:
+                context_info = st.session_state.get('text_context', {})
+                text_length = len(st.session_state.processed_text)
+                
                 html_template = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -1936,6 +2116,13 @@ class StreamlitLLMEntityLinker:
             margin-bottom: 20px;
             border-left: 4px solid #2196F3;
         }}
+        .context-info {{
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            font-size: 0.9em;
+        }}
         @media (max-width: 768px) {{
             body {{
                 padding: 10px;
@@ -1946,8 +2133,17 @@ class StreamlitLLMEntityLinker:
 <body>
     <div class="processing-info">
         <strong>Generated by LLM Entity Linker</strong><br>
-        Entities extracted and disambiguated using Gemini LLM with intelligent context analysis.
-        No hardcoded bias - fully LLM-driven approach.
+        Entities extracted and disambiguated using Gemini LLM with intelligent context analysis.<br>
+        No hardcoded bias - fully LLM-driven approach processing {text_length:,} characters.
+    </div>
+    <div class="context-info">
+        <strong>Context Analysis:</strong> 
+        Period: {context_info.get('period', 'Unknown')} | 
+        Region: {context_info.get('region', 'Unknown')} | 
+        Subject: {context_info.get('subject_matter', 'Unknown')}
+        <br>
+        <strong>Processing:</strong> {len(st.session_state.entities)} entities found
+        {' (processed in chunks)' if any(e.get('chunk_number') for e in st.session_state.entities) else ''}
     </div>
     {st.session_state.html_content}
 </body>
