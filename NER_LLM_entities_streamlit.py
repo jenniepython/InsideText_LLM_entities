@@ -1027,6 +1027,55 @@ Which option number (1-{len(candidates)}) best fits this entity in this context?
             return candidates[0]
         
         return None
+        """Simplified LLM disambiguation if main method fails."""
+        try:
+            try:
+                import google.generativeai as genai
+            except ImportError:
+                return candidates[0]
+            
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                return candidates[0]
+            
+            # Skip LLM if context is empty (no API key case)
+            entity_context = entity.get('context', {})
+            if not entity_context:
+                return candidates[0]
+            
+            # Super simple prompt as backup - use first 2000 chars
+            candidates_simple = [f"{i+1}. {c['title']}: {c['description'][:200]}" 
+                               for i, c in enumerate(candidates)]
+            
+            simple_prompt = f"""Text context: "{full_text[:2000]}..."
+Entity: "{entity['text']}"
+Options: {chr(10).join(candidates_simple)}
+
+Which option number (1-{len(candidates)}) best fits this entity in this context? Just respond with the number."""
+
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            
+            response = model.generate_content(simple_prompt)
+            result = response.text.strip()
+            
+            # Extract number
+            match = re.search(r'(\d+)', result)
+            if match:
+                choice = int(match.group(1)) - 1
+                if 0 <= choice < len(candidates):
+                    candidates[choice]['disambiguation_method'] = 'llm_simple_fallback'
+                    return candidates[choice]
+            
+        except Exception:
+            pass
+        
+        # Ultimate fallback
+        if candidates:
+            candidates[0]['disambiguation_method'] = 'first_result_fallback'
+            return candidates[0]
+        
+        return None
 
     def link_to_wikipedia_with_llm_disambiguation(self, entities, full_text):
         """Use LLM to help disambiguate Wikipedia results based on context - LAST RESORT only."""
