@@ -87,7 +87,7 @@ class LLMEntityLinker:
     """
     
     def __init__(self):
-        """Initialize the LLM Entity Linker."""
+        """Initialise the LLM Entity Linker."""
         # Color scheme for different entity types in HTML output
         self.colors = {
             'PERSON': '#BF7B69',          # F&B Red earth        
@@ -157,8 +157,8 @@ class LLMEntityLinker:
             # Check for API key
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
-                # Fallback to basic structure if no API key
-                return self._basic_context_fallback()
+                st.error("GEMINI_API_KEY environment variable not found! Please set your API key.")
+                return {}
             
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
@@ -216,8 +216,8 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
             elif context_data and isinstance(context_data, dict):
                 context = context_data
             else:
-                # If LLM response parsing fails, return basic structure
-                return self._basic_context_fallback()
+                st.error("Failed to parse LLM context analysis response.")
+                return {}
             
             # Ensure all required keys exist with defaults
             return {
@@ -237,68 +237,11 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
             }
             
         except Exception as e:
-            print(f"LLM context analysis failed: {e}")
-            return self._basic_context_fallback()
-
-    def _basic_context_fallback(self):
-        """Minimal fallback context structure when LLM analysis fails."""
-        return {
-            'period': None,
-            'region': None,
-            'culture': None,
-            'subject_matter': None,
-            'language_style': 'modern',
-            'time_indicators': [],
-            'place_indicators': [],
-            'subject_indicators': [],
-            'confidence': 'low',
-            'reasoning': 'Fallback - LLM analysis unavailable',
-            'analysis_method': 'fallback',
-            'text_length_analyzed': 0,
-            'total_text_length': 0
-        }
-
-    def chunk_text_for_processing(self, text: str, chunk_size: int = 8000, overlap: int = 500):
-        """Split long text into overlapping chunks for processing."""
-        if len(text) <= chunk_size:
-            return [text]
-        
-        chunks = []
-        start = 0
-        
-        while start < len(text):
-            end = start + chunk_size
-            
-            # If this isn't the last chunk, try to break at a sentence boundary
-            if end < len(text):
-                # Look for sentence endings in the last 200 characters of the chunk
-                search_start = max(start + chunk_size - 200, start)
-                sentence_endings = []
-                
-                for i in range(search_start, min(end, len(text))):
-                    if text[i] in '.!?':
-                        sentence_endings.append(i + 1)
-                
-                if sentence_endings:
-                    # Use the last sentence ending as the chunk boundary
-                    end = sentence_endings[-1]
-            
-            chunk = text[start:end]
-            chunks.append({
-                'text': chunk,
-                'start_offset': start,
-                'end_offset': end
-            })
-            
-            # Next chunk starts with overlap
-            start = end - overlap
-            if start >= len(text):
-                break
-        
-        return chunks
+            st.error(f"LLM context analysis failed: {e}")
+            return {}
 
     def extract_entities(self, text: str):
-        """Extract named entities from text using Gemini LLM with context awareness - processes ALL text."""
+        """Extract named entities from text using Gemini LLM with context awareness - processes text directly."""
         try:
             import google.generativeai as genai
             
@@ -314,36 +257,8 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-1.5-flash")
             
-            # If text is short enough, process it all at once
-            if len(text) <= 10000:
-                return self._extract_entities_single_pass(text, context, model)
-            
-            # For longer texts, use chunking
-            st.info(f"Processing long text ({len(text):,} characters) in chunks...")
-            chunks = self.chunk_text_for_processing(text)
-            all_entities = []
-            
-            for i, chunk_info in enumerate(chunks):
-                st.write(f"Processing chunk {i+1}/{len(chunks)}...")
-                
-                chunk_entities = self._extract_entities_single_pass(
-                    chunk_info['text'], 
-                    context, 
-                    model
-                )
-                
-                # Adjust entity positions to account for chunk offset
-                for entity in chunk_entities:
-                    entity['start'] += chunk_info['start_offset']
-                    entity['end'] += chunk_info['start_offset']
-                    entity['chunk_number'] = i + 1
-                
-                all_entities.extend(chunk_entities)
-            
-            # Remove duplicate entities that may appear across chunk boundaries
-            all_entities = self._deduplicate_entities(all_entities)
-            
-            return all_entities
+            # Process text directly
+            return self._extract_entities_single_pass(text, context, model)
             
         except Exception as e:
             st.error(f"Error in LLM entity extraction: {e}")
@@ -382,9 +297,8 @@ Extract ALL entities you can find. Return ONLY a JSON array, no other text:
         entities_raw = self.extract_json_from_response(llm_response)
         
         if not entities_raw:
-            st.warning("Could not parse JSON from Gemini response.")
-            # Try even simpler approach
-            return self._fallback_entity_extraction(text, model)
+            st.error("Could not parse JSON from Gemini response. Please try again.")
+            return []
         
         # Convert to consistent format and remove duplicates
         entities = []
@@ -420,75 +334,6 @@ Extract ALL entities you can find. Return ONLY a JSON array, no other text:
                 entities.append(entity)
         
         return entities
-
-    def _deduplicate_entities(self, entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Remove duplicate entities that may appear across chunk boundaries."""
-        unique_entities = []
-        seen_entities = set()
-        
-        # Sort entities by start position
-        entities.sort(key=lambda x: x['start'])
-        
-        for entity in entities:
-            # Create a key for deduplication
-            key = (entity['text'].lower(), entity['type'])
-            
-            # Check for near-duplicate positions (within 50 characters)
-            is_duplicate = False
-            for existing_entity in unique_entities:
-                if (existing_entity['text'].lower() == entity['text'].lower() and 
-                    existing_entity['type'] == entity['type'] and
-                    abs(existing_entity['start'] - entity['start']) <= 50):
-                    is_duplicate = True
-                    break
-            
-            if not is_duplicate:
-                unique_entities.append(entity)
-        
-        return unique_entities
-
-    def _fallback_entity_extraction(self, text, model):
-        """Super simple fallback entity extraction."""
-        try:
-            # Limit fallback to first 2000 chars to avoid token limits
-            text_sample = text[:2000]
-            
-            simple_prompt = f"""Find people, places and organizations in this text:
-
-Text: {text_sample}
-
-List them like this:
-Name1|PERSON
-London|GPE  
-Company Name|ORGANIZATION
-
-List only, no other text:"""
-
-            response = model.generate_content(simple_prompt)
-            
-            # Parse simple format
-            entities = []
-            lines = response.text.strip().split('\n')
-            for line in lines:
-                if '|' in line:
-                    parts = line.split('|')
-                    if len(parts) == 2:
-                        name, entity_type = parts[0].strip(), parts[1].strip()
-                        start_pos = text.find(name)
-                        if start_pos >= 0:
-                            entities.append({
-                                'text': name,
-                                'type': entity_type,
-                                'start': start_pos,
-                                'end': start_pos + len(name),
-                                'context': {}
-                            })
-            
-            return entities
-            
-        except Exception as e:
-            st.error(f"Fallback extraction failed: {e}")
-            return []
 
     def link_to_getty_aat(self, entities):
         """Add Getty Art & Architecture Thesaurus linking using enhanced search."""
@@ -666,6 +511,10 @@ List only, no other text:"""
             
             entity_context = entity.get('context', {})
             
+            # Skip LLM if context is empty (no API key case)
+            if not entity_context:
+                return [entity['text']]
+            
             prompt = f"""Create optimized Wikidata search queries for this entity.
 
 ENTITY: "{entity['text']}" (Type: {entity['type']})
@@ -762,6 +611,15 @@ Respond with JSON array of 2-3 search queries:
                 }
             
             entity_context = entity.get('context', {})
+            
+            # Skip LLM if context is empty (no API key case)
+            if not entity_context:
+                result = results[0]
+                return {
+                    'wikidata_url': f"http://www.wikidata.org/entity/{result['id']}",
+                    'wikidata_description': result.get('description', ''),
+                    'wikidata_search_query': search_query
+                }
             
             candidates_text = []
             for i, result in enumerate(results):
@@ -930,6 +788,10 @@ Response format: Just the number (1-{len(results)}) or "NONE"
             # Get entity context from the LLM-driven analysis
             entity_context = entity.get('context', {})
             
+            # Skip LLM if context is empty (no API key case)
+            if not entity_context:
+                return candidates[0]
+            
             # Get broader context snippet around the entity (up to 1000 chars)
             start = max(0, entity['start'] - 500)
             end = min(len(full_text), entity['end'] + 500)
@@ -1035,6 +897,39 @@ Reasoning: [your analysis]
                     
         except Exception as e:
             print(f"LLM disambiguation failed: {e}")
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)prompt)
+            result = response.text.strip()
+            
+            # Parse the LLM response
+            choice_match = re.search(r'Choice:\s*(\d+|NONE)', result, re.IGNORECASE)
+            confidence_match = re.search(r'Confidence:\s*(high|medium|low)', result, re.IGNORECASE)
+            reasoning_match = re.search(r'Reasoning:\s*(.+?)(?:\n|$)', result, re.IGNORECASE | re.DOTALL)
+            
+            if choice_match:
+                choice_str = choice_match.group(1).upper()
+                
+                if choice_str == "NONE":
+                    return None
+                
+                try:
+                    choice = int(choice_str) - 1  # Convert to 0-based index
+                    if 0 <= choice < len(candidates):
+                        selected_candidate = candidates[choice]
+                        
+                        # Add disambiguation metadata
+                        selected_candidate['disambiguation_confidence'] = confidence_match.group(1) if confidence_match else 'medium'
+                        selected_candidate['disambiguation_reasoning'] = reasoning_match.group(1).strip() if reasoning_match else 'LLM selection'
+                        selected_candidate['candidates_available'] = len(candidates)
+                        
+                        return selected_candidate
+                except ValueError:
+                    pass
+            
+            # If parsing fails, let LLM try simpler format
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)
+                    
+        except Exception as e:
+            print(f"LLM disambiguation failed: {e}")
             return self._fallback_simple_disambiguation(entity, candidates, full_text)
 
     def _fallback_simple_disambiguation(self, entity, candidates, full_text):
@@ -1044,6 +939,11 @@ Reasoning: [your analysis]
             
             api_key = os.getenv("GEMINI_API_KEY")
             if not api_key:
+                return candidates[0]
+            
+            # Skip LLM if context is empty (no API key case)
+            entity_context = entity.get('context', {})
+            if not entity_context:
                 return candidates[0]
             
             # Super simple prompt as backup - use first 2000 chars
@@ -1435,35 +1335,35 @@ class StreamlitLLMEntityLinker:
         <div style="background-color: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 1px solid #E0D7C0;">
             <div style="text-align: center; margin-bottom: 20px;">
                 <div style="background-color: #C4C3A2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>Input Text (All Length)</strong>
+                     <strong>Input Text</strong>
                 </div>
-                <div style="margin: 10px 0;">⬇️</div>
+                <div style="margin: 10px 0;">↓</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>Gemini LLM Context Analysis</strong><br><small>First 5000 chars for context</small>
                 </div>
-                <div style="margin: 10px 0;">⬇️</div>
+                <div style="margin: 10px 0;">↓</div>
                 <div style="background-color: #BF7B69; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>LLM Entity Recognition</strong><br><small>Processes FULL text with chunking</small>
+                     <strong>LLM Entity Recognition</strong><br><small>Processes full text</small>
                 </div>
-                <div style="margin: 10px 0;">⬇️</div>
+                <div style="margin: 10px 0;">↓</div>
                 <div style="text-align: center;">
                     <strong>Intelligent Linking Priority:</strong>
                 </div>
                 <div style="margin: 15px 0;">
                     <div style="background-color: #EFCA89; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>1. Getty AAT</strong><br><small>Cultural/architectural terms</small>
+                         <strong>Getty AAT</strong><br><small>Cultural/architectural terms</small>
                     </div>
                     <div style="background-color: #C3B5AC; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                        <strong>2. Wikidata</strong><br><small>Structured knowledge</small>
+                        <strong>Wikidata</strong><br><small>Structured knowledge</small>
                     </div>
                     <div style="background-color: #E6D7C9; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>3. Britannica</strong><br><small>Scholarly articles</small>
+                         <strong>Britannica</strong><br><small>Scholarly articles</small>
                     </div>
                     <div style="background-color: #D4C5B9; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>4. Wikipedia</strong><br><small>LLM disambiguated</small>
+                         <strong>Wikipedia</strong><br><small>LLM disambiguated</small>
                     </div>
                 </div>
-                <div style="margin: 10px 0;">⬇️</div>
+                <div style="margin: 10px 0;">↓</div>
                 <div style="background-color: #F0EAE2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>LLM-Enhanced Geocoding</strong><br><small>Context-aware coordinates</small>
                 </div>
@@ -1474,10 +1374,10 @@ class StreamlitLLMEntityLinker:
     def render_sidebar(self):
         """Render the sidebar with information about LLM approach."""
         st.sidebar.subheader("Enhanced LLM Processing")
-        st.sidebar.info(" Context Analysis: First 5,000 characters\n Entity Extraction: FULL text with intelligent chunking\n Disambiguation: Extended context (5,000 chars)\n No length restrictions on processing")
+        st.sidebar.info("Context Analysis: First 5,000 characters\nEntity Extraction: Full text processing\nDisambiguation: Extended context analysis")
         
         st.sidebar.subheader("Linking Priority")
-        st.sidebar.info("1) Getty AAT (cultural/architectural) 2) Wikidata (structured) 3) Britannica (scholarly) 4) Wikipedia (with LLM disambiguation)")
+        st.sidebar.info("1) Getty AAT (cultural/architectural)\n2) Wikidata (structured)\n3) Britannica (scholarly)\n4) Wikipedia (with LLM disambiguation)")
 
     def render_input_section(self):
         """Render the text input section."""
@@ -1494,16 +1394,14 @@ class StreamlitLLMEntityLinker:
         text_input = st.text_area(
             "Enter your text here:",
             height=200,
-            placeholder="Paste your text here for entity extraction... (No length limit - full text will be processed)",
-            help="You can edit this text or replace it with your own content. The system will process the entire text regardless of length."
+            placeholder="Paste your text here for entity extraction...",
+            help="You can edit this text or replace it with your own content."
         )
         
         # Show character count
         if text_input:
             char_count = len(text_input)
             st.caption(f"Text length: {char_count:,} characters")
-            if char_count > 10000:
-                st.info("Long text detected - will be processed in intelligent chunks with overlap for comprehensive analysis.")
         
         # File upload option in expander
         with st.expander("Or upload a text file"):
@@ -1519,8 +1417,6 @@ class StreamlitLLMEntityLinker:
                     text_input = uploaded_text
                     char_count = len(uploaded_text)
                     st.success(f"File uploaded successfully! ({char_count:,} characters)")
-                    if char_count > 10000:
-                        st.info("Large file detected - will be processed in intelligent chunks.")
                     if not analysis_title:
                         import os
                         default_title = os.path.splitext(uploaded_file.name)[0]
@@ -1542,6 +1438,13 @@ class StreamlitLLMEntityLinker:
             st.warning("Please enter some text to analyse.")
             return
         
+        # Check for API key first
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            st.error("GEMINI_API_KEY environment variable not found! Please set your API key to use this application.")
+            st.info("This application requires a Gemini API key to function. Please set the GEMINI_API_KEY environment variable.")
+            return
+        
         # Check if we've already processed this exact text
         text_hash = hashlib.md5(text.encode()).hexdigest()
         
@@ -1559,6 +1462,12 @@ class StreamlitLLMEntityLinker:
                 status_text.text("LLM analyzing text context (first 5000 chars)...")
                 progress_bar.progress(10)
                 text_context = self.entity_linker.analyse_text_context(text)
+                
+                # Check if context analysis failed (empty dict means API key issue)
+                if not text_context:
+                    progress_bar.empty()
+                    status_text.empty()
+                    return
                 
                 # Show context analysis results early
                 if text_context.get('period') or text_context.get('region') or text_context.get('subject_matter'):
@@ -1671,24 +1580,6 @@ class StreamlitLLMEntityLinker:
                 with col3:
                     geocoded_count = len([e for e in entities if e.get('latitude')])
                     st.metric("Geocoded", geocoded_count)
-                
-                # Show link type breakdown
-                if linking_stats['total_linked'] > 0:
-                    link_breakdown = []
-                    if linking_stats['getty_aat'] > 0:
-                        link_breakdown.append(f"Getty AAT: {linking_stats['getty_aat']}")
-                    if linking_stats['wikidata'] > 0:
-                        link_breakdown.append(f"Wikidata: {linking_stats['wikidata']}")
-                    if linking_stats['britannica'] > 0:
-                        link_breakdown.append(f"Britannica: {linking_stats['britannica']}")
-                    if linking_stats['wikipedia'] > 0:
-                        link_breakdown.append(f"Wikipedia: {linking_stats['wikipedia']}")
-                    
-                    #st.info(f"Link sources: {' | '.join(link_breakdown)}")
-                
-                # Show disambiguation info
-                #if disambiguation_stats['llm_disambiguated'] > 0:
-                #    st.info(f"LLM intelligently disambiguated {disambiguation_stats['llm_disambiguated']} Wikipedia links using context")
                 
             except Exception as e:
                 st.error(f"Error processing text: {e}")
@@ -1817,8 +1708,6 @@ class StreamlitLLMEntityLinker:
                     tooltip_parts.append(f"Location: {loc}")
                 if entity.get('disambiguation_method') == 'llm_contextual':
                     tooltip_parts.append("LLM disambiguated")
-                if entity.get('chunk_number'):
-                    tooltip_parts.append(f"Chunk: {entity['chunk_number']}")
                 
                 tooltip = html_module.escape(" | ".join(tooltip_parts))
                 
@@ -1877,26 +1766,7 @@ class StreamlitLLMEntityLinker:
             st.metric("Geocoded", geocoded_count)
         
         with col4:
-            chunked_entities = len([e for e in entities if e.get('chunk_number')])
-            if chunked_entities > 0:
-                st.metric("From Chunks", chunked_entities)
-            else:
-                st.metric("LLM Disambiguated", disambiguation_stats['llm_disambiguated'])
-        
-        # Show processing info if text was chunked
-        if any(e.get('chunk_number') for e in entities):
-            chunks_used = len(set(e.get('chunk_number') for e in entities if e.get('chunk_number')))
-            st.info(f"Long text processed in {chunks_used} intelligent chunks with overlap to ensure comprehensive coverage.")
-        
-        # Show disambiguation statistics
-        #if disambiguation_stats['llm_disambiguated'] > 0:
-        #    st.markdown(f"""
-        #    <div style="background-color: #E8F4FD; padding: 15px; border-radius: 8px; border-left: 4px solid #2196F3; margin-bottom: 20px;">
-        #        <strong>Smart Disambiguation Applied</strong><br>
-        #        The LLM intelligently selected the best Wikipedia links for <strong>{disambiguation_stats['llm_disambiguated']}</strong> entities 
-        #        by analyzing the full context (up to 5,000 characters), eliminating ambiguous results.
-        #    </div>
-        #    """, unsafe_allow_html=True)
+            st.metric("LLM Disambiguated", disambiguation_stats['llm_disambiguated'])
         
         # Highlighted text
         st.subheader("Highlighted Text")
@@ -1956,12 +1826,6 @@ class StreamlitLLMEntityLinker:
             else:
                 row['Method'] = "Direct"
             
-            # Add chunk info if available
-            if entity.get('chunk_number'):
-                row['Source'] = f"Chunk {entity['chunk_number']}"
-            else:
-                row['Source'] = "Main text"
-            
             table_data.append(row)
         
         # Create DataFrame and display
@@ -2020,10 +1884,6 @@ class StreamlitLLMEntityLinker:
                     "startOffset": entity['start'],
                     "endOffset": entity['end']
                 }
-                
-                # Add chunk info if available
-                if entity.get('chunk_number'):
-                    entity_data['sourceChunk'] = entity['chunk_number']
                 
                 # Add disambiguation metadata
                 if entity.get('disambiguation_method'):
@@ -2143,7 +2003,6 @@ class StreamlitLLMEntityLinker:
         Subject: {context_info.get('subject_matter', 'Unknown')}
         <br>
         <strong>Processing:</strong> {len(st.session_state.entities)} entities found
-        {' (processed in chunks)' if any(e.get('chunk_number') for e in st.session_state.entities) else ''}
     </div>
     {st.session_state.html_content}
 </body>
