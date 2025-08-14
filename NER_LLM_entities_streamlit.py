@@ -87,7 +87,7 @@ class LLMEntityLinker:
     """
     
     def __init__(self):
-        """Initialise the LLM Entity Linker."""
+        """Initialize the LLM Entity Linker."""
         # Color scheme for different entity types in HTML output
         self.colors = {
             'PERSON': '#BF7B69',          # F&B Red earth        
@@ -546,6 +546,39 @@ Respond with JSON array of 2-3 search queries:
             model = genai.GenerativeModel("gemini-1.5-flash")
             
             response = model.generate_content(prompt)
+            result = response.text.strip()
+            
+            # Parse the LLM response
+            choice_match = re.search(r'Choice:\s*(\d+|NONE)', result, re.IGNORECASE)
+            confidence_match = re.search(r'Confidence:\s*(high|medium|low)', result, re.IGNORECASE)
+            reasoning_match = re.search(r'Reasoning:\s*(.+?)(?:\n|$)', result, re.IGNORECASE | re.DOTALL)
+            
+            if choice_match:
+                choice_str = choice_match.group(1).upper()
+                
+                if choice_str == "NONE":
+                    return None
+                
+                try:
+                    choice = int(choice_str) - 1  # Convert to 0-based index
+                    if 0 <= choice < len(candidates):
+                        selected_candidate = candidates[choice]
+                        
+                        # Add disambiguation metadata
+                        selected_candidate['disambiguation_confidence'] = confidence_match.group(1) if confidence_match else 'medium'
+                        selected_candidate['disambiguation_reasoning'] = reasoning_match.group(1).strip() if reasoning_match else 'LLM selection'
+                        selected_candidate['candidates_available'] = len(candidates)
+                        
+                        return selected_candidate
+                except ValueError:
+                    pass
+            
+            # If parsing fails, let LLM try simpler format
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)
+                    
+        except Exception as e:
+            print(f"LLM disambiguation failed: {e}")
+            return self._fallback_simple_disambiguation(entity, candidates, full_text)prompt)
             search_queries = self.extract_json_from_response(response.text)
             
             if search_queries and isinstance(search_queries, list):
