@@ -1684,11 +1684,11 @@ class StreamlitLLMEntityLinker:
                     if linking_stats['wikipedia'] > 0:
                         link_breakdown.append(f"Wikipedia: {linking_stats['wikipedia']}")
                     
-                    st.info(f"🔗 Link sources: {' | '.join(link_breakdown)}")
+                    #st.info(f"Link sources: {' | '.join(link_breakdown)}")
                 
                 # Show disambiguation info
-                if disambiguation_stats['llm_disambiguated'] > 0:
-                    st.info(f"LLM intelligently disambiguated {disambiguation_stats['llm_disambiguated']} Wikipedia links using context")
+                #if disambiguation_stats['llm_disambiguated'] > 0:
+                #    st.info(f"LLM intelligently disambiguated {disambiguation_stats['llm_disambiguated']} Wikipedia links using context")
                 
             except Exception as e:
                 st.error(f"Error processing text: {e}")
@@ -1889,14 +1889,14 @@ class StreamlitLLMEntityLinker:
             st.info(f"Long text processed in {chunks_used} intelligent chunks with overlap to ensure comprehensive coverage.")
         
         # Show disambiguation statistics
-        if disambiguation_stats['llm_disambiguated'] > 0:
-            st.markdown(f"""
-            <div style="background-color: #E8F4FD; padding: 15px; border-radius: 8px; border-left: 4px solid #2196F3; margin-bottom: 20px;">
-                <strong>Smart Disambiguation Applied</strong><br>
-                The LLM intelligently selected the best Wikipedia links for <strong>{disambiguation_stats['llm_disambiguated']}</strong> entities 
-                by analyzing the full context (up to 5,000 characters), eliminating ambiguous results.
-            </div>
-            """, unsafe_allow_html=True)
+        #if disambiguation_stats['llm_disambiguated'] > 0:
+        #    st.markdown(f"""
+        #    <div style="background-color: #E8F4FD; padding: 15px; border-radius: 8px; border-left: 4px solid #2196F3; margin-bottom: 20px;">
+        #        <strong>Smart Disambiguation Applied</strong><br>
+        #        The LLM intelligently selected the best Wikipedia links for <strong>{disambiguation_stats['llm_disambiguated']}</strong> entities 
+        #        by analyzing the full context (up to 5,000 characters), eliminating ambiguous results.
+        #    </div>
+        #    """, unsafe_allow_html=True)
         
         # Highlighted text
         st.subheader("Highlighted Text")
