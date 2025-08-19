@@ -108,9 +108,12 @@ class LLMEntityLinker:
 
     def extract_json_from_response(self, response_text):
         """Extract JSON from LLM response with improved parsing."""
+        if not response_text or not isinstance(response_text, str):
+            return None
+            
         response_text = response_text.strip()
         
-        # Try to find JSON array patterns
+        # Try to find JSON array patterns first
         json_patterns = [
             r'\[.*?\]',  # Array pattern
             r'\{.*?\}'   # Object pattern
@@ -147,6 +150,18 @@ class LLMEntityLinker:
                 except json.JSONDecodeError:
                     continue
         
+        # Try to parse the entire response as JSON
+        try:
+            parsed = json.loads(response_text)
+            if isinstance(parsed, list):
+                return parsed
+            elif isinstance(parsed, dict):
+                return [parsed]
+        except json.JSONDecodeError:
+            pass
+        
+        # If all else fails, try to extract key information manually
+        print(f"Could not parse JSON from response: {response_text[:200]}...")
         return None
 
     def analyse_text_context(self, text: str) -> Dict[str, Any]:
@@ -212,16 +227,51 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
             response = model.generate_content(prompt)
             llm_response = response.text.strip()
             
+            # Debug: Show what we got from Gemini
+            print(f"Gemini context response (first 500 chars): {llm_response[:500]}")
+            
             # Parse the LLM's context analysis
             context_data = self.extract_json_from_response(llm_response)
             
+            # Handle different response formats
+            context = None
             if context_data and isinstance(context_data, list) and len(context_data) > 0:
                 context = context_data[0]
             elif context_data and isinstance(context_data, dict):
                 context = context_data
             else:
-                st.error("Failed to parse LLM context analysis response.")
-                return {}
+                # If JSON parsing failed, try to extract basic info from text response
+                st.warning("Could not parse structured context response. Attempting manual extraction.")
+                context = self._extract_context_manually(llm_response)
+                if not context:
+                    context = {
+                        'period': None,
+                        'region': None,
+                        'culture': None,
+                        'subject_matter': None,
+                        'language_style': 'modern',
+                        'time_indicators': [],
+                        'place_indicators': [],
+                        'subject_indicators': [],
+                        'confidence': 'low',
+                        'reasoning': 'Fallback - JSON parsing failed'
+                    }
+            
+            # Ensure context is a dictionary
+            if not isinstance(context, dict):
+                st.error(f"Context analysis returned unexpected format: {type(context)}")
+                context = {
+                    'period': None,
+                    'region': None,
+                    'culture': None,
+                    'subject_matter': None,
+                    'language_style': 'modern',
+                    'time_indicators': [],
+                    'place_indicators': [],
+                    'subject_indicators': [],
+                    'confidence': 'low',
+                    'reasoning': 'Error in context analysis'
+                }
             
             # Ensure all required keys exist with defaults
             return {
@@ -243,6 +293,69 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
         except Exception as e:
             st.error(f"LLM context analysis failed: {e}")
             return {}
+
+    def _extract_context_manually(self, response_text: str) -> Dict[str, Any]:
+        """Manually extract context information from LLM response when JSON parsing fails."""
+        try:
+            context = {
+                'period': None,
+                'region': None,
+                'culture': None,
+                'subject_matter': None,
+                'language_style': 'modern',
+                'time_indicators': [],
+                'place_indicators': [],
+                'subject_indicators': [],
+                'confidence': 'low',
+                'reasoning': 'Manual extraction from non-JSON response'
+            }
+            
+            response_lower = response_text.lower()
+            
+            # Try to extract period information
+            period_keywords = {
+                'ancient': ['ancient', 'antiquity', 'classical'],
+                'medieval': ['medieval', 'middle ages', 'feudal'],
+                'renaissance': ['renaissance', 'early modern'],
+                'modern': ['modern', 'industrial', 'contemporary'],
+                'roman': ['roman', 'rome'],
+                'greek': ['greek', 'greece', 'hellenic'],
+                'byzantine': ['byzantine', 'byzantium']
+            }
+            
+            for period, keywords in period_keywords.items():
+                if any(keyword in response_lower for keyword in keywords):
+                    context['period'] = period
+                    break
+            
+            # Try to extract regional information
+            region_keywords = {
+                'europe': ['europe', 'european'],
+                'mediterranean': ['mediterranean', 'aegean'],
+                'asia': ['asia', 'asian'],
+                'greece': ['greece', 'greek', 'hellenic'],
+                'italy': ['italy', 'italian', 'rome'],
+                'britain': ['britain', 'british', 'england']
+            }
+            
+            for region, keywords in region_keywords.items():
+                if any(keyword in response_lower for keyword in keywords):
+                    context['region'] = region
+                    break
+            
+            # Extract confidence if mentioned
+            if 'high confidence' in response_lower:
+                context['confidence'] = 'high'
+            elif 'medium confidence' in response_lower:
+                context['confidence'] = 'medium'
+            elif 'low confidence' in response_lower:
+                context['confidence'] = 'low'
+            
+            return context
+            
+        except Exception as e:
+            print(f"Manual context extraction failed: {e}")
+            return None
 
     def extract_entities(self, text: str):
         """Extract named entities from text using Gemini LLM with context awareness - processes text directly."""
