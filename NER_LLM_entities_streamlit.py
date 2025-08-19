@@ -16,7 +16,7 @@ def link_to_britannica(self, entities, full_text=""):
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                     }
 
-    def _get_local_context(self, entity, full_text):
+def _get_local_context(self, entity, full_text):
         """Get standardized local context around an entity."""
         if not full_text or entity.get('start') is None:
             return ""
@@ -48,7 +48,7 @@ def link_to_britannica(self, entities, full_text=""):
         
         return entities
 
-    def _generate_britannica_search_terms(self, entity, full_text):
+def _generate_britannica_search_terms(self, entity, full_text):
         """Generate context-aware search terms for Britannica using LLM."""
         # Default fallback
         base_terms = [entity['text']]
@@ -117,7 +117,7 @@ Respond with JSON array of 2-3 search terms:
         
         return base_terms
 
-    def _select_best_britannica_match(self, entity, matches, search_term, full_text):
+def _select_best_britannica_match(self, entity, matches, search_term, full_text):
         """Use LLM to select the best Britannica match from multiple results."""
         if not matches:
             return None
