@@ -110,10 +110,10 @@ class LLMEntityLinker:
         """Extract JSON from LLM response with improved parsing."""
         response_text = response_text.strip()
         
-        # Try to find JSON array patterns
+        # Try to find JSON object patterns first (more likely for context analysis)
         json_patterns = [
-            r'\[.*?\]',  # Array pattern
-            r'\{.*?\}'   # Object pattern
+            r'\{.*?\}',   # Object pattern - try first
+            r'\[.*?\]'    # Array pattern
         ]
         
         for pattern in json_patterns:
@@ -121,10 +121,10 @@ class LLMEntityLinker:
             for match in matches:
                 try:
                     parsed = json.loads(match)
-                    if isinstance(parsed, list):
+                    if isinstance(parsed, dict):
                         return parsed
-                    elif isinstance(parsed, dict):
-                        return [parsed]
+                    elif isinstance(parsed, list):
+                        return parsed
                 except json.JSONDecodeError:
                     continue
         
@@ -140,13 +140,15 @@ class LLMEntityLinker:
             for match in matches:
                 try:
                     parsed = json.loads(match.strip())
-                    if isinstance(parsed, list):
+                    if isinstance(parsed, dict):
                         return parsed
-                    elif isinstance(parsed, dict):
-                        return [parsed]
+                    elif isinstance(parsed, list):
+                        return parsed
                 except json.JSONDecodeError:
                     continue
         
+        # Debug: print what we got if parsing fails
+        print(f"Failed to parse JSON from LLM response. Response was: {response_text[:500]}...")
         return None
 
     def analyse_text_context(self, text: str) -> Dict[str, Any]:
@@ -215,17 +217,25 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
             # Parse the LLM's context analysis
             context_data = self.extract_json_from_response(llm_response)
             
-            if context_data and isinstance(context_data, list) and len(context_data) > 0:
-                context = context_data[0]
-            elif context_data and isinstance(context_data, dict):
-                context = context_data
-            else:
-                st.error("Failed to parse LLM context analysis response.")
+            # Debug: show what we got
+            if context_data is None:
+                st.error("Could not extract JSON from LLM response. The LLM may not have followed the JSON format.")
+                st.text(f"LLM Response (first 500 chars): {llm_response[:500]}")
                 return {}
             
-            # Ensure context is a dictionary before calling .get()
+            # Handle different response formats
+            if isinstance(context_data, dict):
+                context = context_data
+            elif isinstance(context_data, list) and len(context_data) > 0:
+                context = context_data[0]
+            else:
+                st.error("LLM returned unexpected JSON structure.")
+                st.text(f"Received: {str(context_data)[:200]}")
+                return {}
+            
+            # Ensure context is a dictionary
             if not isinstance(context, dict):
-                st.error("LLM returned invalid context format.")
+                st.error(f"Expected dictionary, got {type(context).__name__}: {str(context)[:200]}")
                 return {}
             
             # Ensure all required keys exist with defaults
