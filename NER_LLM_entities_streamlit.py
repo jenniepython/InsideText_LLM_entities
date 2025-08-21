@@ -223,6 +223,11 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
                 st.error("Failed to parse LLM context analysis response.")
                 return {}
             
+            # Ensure context is a dictionary before calling .get()
+            if not isinstance(context, dict):
+                st.error("LLM returned invalid context format.")
+                return {}
+            
             # Ensure all required keys exist with defaults
             return {
                 'period': context.get('period'),
