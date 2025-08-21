@@ -290,73 +290,79 @@ Focus on being accurate and unbiased. If uncertain about any aspect, use null or
 
     def _extract_entities_single_pass(self, text: str, context: Dict[str, Any], model):
         """Extract entities from a single text passage."""
-        # SIMPLIFIED PROMPT - much more direct
-        prompt = f"""Extract ALL named entities from this text. Return a JSON array only.
+        # MUCH SIMPLER PROMPT - focus on getting ANY response
+        prompt = f"""Extract named entities from this text and return as JSON array.
 
 Text: "{text}"
 
-Find these entity types:
-- PERSON: People's names (e.g., "John Smith", "Dr. Johnson")
-- ORGANIZATION: Companies, groups, institutions 
-- GPE: Cities, countries, regions (e.g., "London", "England")
-- LOCATION: Geographic places, landmarks
-- FACILITY: Buildings, venues, theaters, institutions
-- ADDRESS: Street addresses
-- DATE: Years, dates, time periods
-- PRODUCT: Objects, tools, equipment
-- WORK_OF_ART: Books, plays, artworks
-- EVENT: Named events
+Find: people, places, organizations, dates, addresses, buildings, artworks.
 
-For each entity found, return:
-{{"text": "entity name", "type": "ENTITY_TYPE", "start_pos": 0}}
+Return ONLY a JSON array like this:
+[
+  {{"text": "Richard Southern", "type": "PERSON"}},
+  {{"text": "Whitechapel Pavilion", "type": "FACILITY"}},
+  {{"text": "1961", "type": "DATE"}}
+]
 
-Extract ALL entities you can find. Return ONLY a JSON array, no other text:
-"""
+JSON array:"""
         
-        # Use simpler prompt
-        gemini_response = model.generate_content(prompt)
-        llm_response = gemini_response.text
-        
-        entities_raw = self.extract_json_from_response(llm_response)
-        
-        if not entities_raw:
-            st.error("Could not parse JSON from Gemini response. Please try again.")
+        try:
+            # Use simpler prompt
+            gemini_response = model.generate_content(prompt)
+            llm_response = gemini_response.text.strip()
+            
+            # Debug: show response
+            print(f"LLM Entity Response: {llm_response[:300]}...")
+            
+            entities_raw = self.extract_json_from_response(llm_response)
+            
+            if not entities_raw:
+                st.error("Could not parse JSON from entity extraction response.")
+                st.text(f"LLM Response: {llm_response[:500]}")
+                return []
+            
+            # Convert to consistent format and remove duplicates
+            entities = []
+            seen_entities = set()  # Track (text, type) pairs to avoid duplicates
+            
+            # Handle both list and single dict responses
+            if isinstance(entities_raw, dict):
+                entities_raw = [entities_raw]
+            
+            for entity_raw in entities_raw:
+                if isinstance(entity_raw, dict) and 'text' in entity_raw and 'type' in entity_raw:
+                    entity_text = entity_raw['text'].strip()
+                    entity_type = entity_raw['type']
+                    
+                    # Create unique key for duplicate detection
+                    unique_key = (entity_text.lower(), entity_type)
+                    
+                    # Skip if we've already seen this entity
+                    if unique_key in seen_entities:
+                        continue
+                    
+                    seen_entities.add(unique_key)
+                    
+                    # Find actual position in text
+                    start_pos = text.find(entity_text)
+                    if start_pos == -1:
+                        # Try with start_pos from LLM if provided
+                        start_pos = entity_raw.get('start_pos', 0)
+                    
+                    entity = {
+                        'text': entity_text,
+                        'type': entity_type,
+                        'start': start_pos,
+                        'end': start_pos + len(entity_text),
+                        'context': context  # Store context for linking
+                    }
+                    entities.append(entity)
+            
+            return entities
+            
+        except Exception as e:
+            st.error(f"Entity extraction failed: {e}")
             return []
-        
-        # Convert to consistent format and remove duplicates
-        entities = []
-        seen_entities = set()  # Track (text, type) pairs to avoid duplicates
-        
-        for entity_raw in entities_raw:
-            if 'text' in entity_raw and 'type' in entity_raw:
-                entity_text = entity_raw['text'].strip()
-                entity_type = entity_raw['type']
-                
-                # Create unique key for duplicate detection
-                unique_key = (entity_text.lower(), entity_type)
-                
-                # Skip if we've already seen this entity
-                if unique_key in seen_entities:
-                    continue
-                
-                seen_entities.add(unique_key)
-                
-                # Find actual position in text
-                start_pos = text.find(entity_text)
-                if start_pos == -1:
-                    # Try with start_pos from LLM if provided
-                    start_pos = entity_raw.get('start_pos', 0)
-                
-                entity = {
-                    'text': entity_text,
-                    'type': entity_type,
-                    'start': start_pos,
-                    'end': start_pos + len(entity_text),
-                    'context': context  # Store context for linking
-                }
-                entities.append(entity)
-        
-        return entities
 
     def link_to_getty_aat(self, entities):
         """Add Getty Art & Architecture Thesaurus linking using enhanced search."""
