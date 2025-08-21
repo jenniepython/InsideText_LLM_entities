@@ -954,28 +954,6 @@ Reasoning: [your analysis]
         except Exception as e:
             print(f"LLM disambiguation failed: {e}")
             return self._fallback_simple_disambiguation(entity, candidates, full_text)
-                    return None
-                
-                try:
-                    choice = int(choice_str) - 1  # Convert to 0-based index
-                    if 0 <= choice < len(candidates):
-                        selected_candidate = candidates[choice]
-                        
-                        # Add disambiguation metadata
-                        selected_candidate['disambiguation_confidence'] = confidence_match.group(1) if confidence_match else 'medium'
-                        selected_candidate['disambiguation_reasoning'] = reasoning_match.group(1).strip() if reasoning_match else 'LLM selection'
-                        selected_candidate['candidates_available'] = len(candidates)
-                        
-                        return selected_candidate
-                except ValueError:
-                    pass
-            
-            # If parsing fails, let LLM try simpler format
-            return self._fallback_simple_disambiguation(entity, candidates, full_text)
-                    
-        except Exception as e:
-            print(f"LLM disambiguation failed: {e}")
-            return self._fallback_simple_disambiguation(entity, candidates, full_text)
 
     def _fallback_simple_disambiguation(self, entity, candidates, full_text):
         """Simplified LLM disambiguation if main method fails."""
