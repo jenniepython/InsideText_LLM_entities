@@ -1133,6 +1133,7 @@ class StreamlitLLMEntityLinker:
     def process_text(self, text: str, title: str):
         """
         Process the input text using the LLM EntityLinker with enhanced geocoding feedback.
+        Fixed to preserve entity links during geocoding.
         """
         if not text.strip():
             st.warning("Please enter some text to analyse.")
@@ -1188,26 +1189,45 @@ class StreamlitLLMEntityLinker:
                 linked_entities_json = self.cached_link_to_britannica(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 6: Get coordinates with detailed feedback
+                # Step 6: Get coordinates with detailed feedback - FIXED VERSION
                 if place_entities:
                     status_text.text(f"Geocoding {len(place_entities)} place entities...")
                     progress_bar.progress(85)
                     
                     try:
-                        # Use the get_coordinates method which handles multiple geocoding services
-                        geocoded_entities = self.entity_linker.get_coordinates(place_entities, text)
+                        # Create a copy of place entities for geocoding to preserve original links
+                        place_entities_for_geocoding = []
+                        for entity in entities:
+                            if entity['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION', 'ADDRESS']:
+                                place_entities_for_geocoding.append(entity.copy())
                         
-                        # Update the entities list with geocoded results
+                        # Use the get_coordinates method which handles multiple geocoding services
+                        geocoded_entities = self.entity_linker.get_coordinates(place_entities_for_geocoding, text)
+                        
+                        # Update ONLY the geocoding-related fields, preserving all existing links
                         geocoded_count = 0
                         for geocoded_entity in geocoded_entities:
-                            # Find the corresponding entity in the main list and update it
+                            # Find the corresponding entity in the main list and update only geocoding fields
                             for idx, entity in enumerate(entities):
                                 if (entity['text'] == geocoded_entity['text'] and 
                                     entity['type'] == geocoded_entity['type'] and
                                     entity['start'] == geocoded_entity['start']):
-                                    entities[idx] = geocoded_entity
+                                    
+                                    # Only update geocoding-related fields, preserve all links
                                     if geocoded_entity.get('latitude') is not None:
+                                        entities[idx]['latitude'] = geocoded_entity['latitude']
+                                        entities[idx]['longitude'] = geocoded_entity['longitude']
                                         geocoded_count += 1
+                                    
+                                    if geocoded_entity.get('location_name'):
+                                        entities[idx]['location_name'] = geocoded_entity['location_name']
+                                    
+                                    if geocoded_entity.get('geocoding_source'):
+                                        entities[idx]['geocoding_source'] = geocoded_entity['geocoding_source']
+                                    
+                                    if geocoded_entity.get('search_term_used'):
+                                        entities[idx]['search_term_used'] = geocoded_entity['search_term_used']
+                                    
                                     break
                         
                         # Show geocoding results
