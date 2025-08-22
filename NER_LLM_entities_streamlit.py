@@ -1132,11 +1132,7 @@ class StreamlitLLMEntityLinker:
 
     def process_text(self, text: str, title: str):
         """
-        Process the input text using the LLM EntityLinker with contextual analysis.
-        
-        Args:
-            text: Input text to process
-            title: Analysis title
+        Process the input text using the LLM EntityLinker with enhanced geocoding feedback.
         """
         if not text.strip():
             st.warning("Please enter some text to analyse.")
@@ -1170,6 +1166,9 @@ class StreamlitLLMEntityLinker:
                     st.warning("No entities found in the text.")
                     return
                 
+                # Count place entities for geocoding feedback
+                place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION', 'ADDRESS']]
+                
                 # Step 3: Link to Wikidata (cached)
                 status_text.text("Linking to Wikidata...")
                 progress_bar.progress(50)
@@ -1189,18 +1188,17 @@ class StreamlitLLMEntityLinker:
                 linked_entities_json = self.cached_link_to_britannica(entities_json)
                 entities = json.loads(linked_entities_json)
                 
-                # Step 6: Get coordinates
-                status_text.text("Getting coordinates...")
-                progress_bar.progress(85)
-                # Geocode all place entities more aggressively
-                place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ORGANIZATION']]
-                
+                # Step 6: Get coordinates with detailed feedback
                 if place_entities:
+                    status_text.text(f"Geocoding {len(place_entities)} place entities...")
+                    progress_bar.progress(85)
+                    
                     try:
                         # Use the get_coordinates method which handles multiple geocoding services
                         geocoded_entities = self.entity_linker.get_coordinates(place_entities, text)
                         
                         # Update the entities list with geocoded results
+                        geocoded_count = 0
                         for geocoded_entity in geocoded_entities:
                             # Find the corresponding entity in the main list and update it
                             for idx, entity in enumerate(entities):
@@ -1208,10 +1206,22 @@ class StreamlitLLMEntityLinker:
                                     entity['type'] == geocoded_entity['type'] and
                                     entity['start'] == geocoded_entity['start']):
                                     entities[idx] = geocoded_entity
+                                    if geocoded_entity.get('latitude') is not None:
+                                        geocoded_count += 1
                                     break
+                        
+                        # Show geocoding results
+                        if geocoded_count > 0:
+                            status_text.text(f"Successfully geocoded {geocoded_count}/{len(place_entities)} places")
+                        else:
+                            status_text.text("Geocoding completed (no coordinates found)")
+                            
                     except Exception as e:
                         st.warning(f"Some geocoding failed: {e}")
                         # Continue with processing even if geocoding fails
+                else:
+                    status_text.text("No place entities found for geocoding")
+                    progress_bar.progress(85)
                 
                 # Step 7: Link addresses to OpenStreetMap
                 status_text.text("Linking addresses to OpenStreetMap...")
@@ -1235,9 +1245,18 @@ class StreamlitLLMEntityLinker:
                 progress_bar.empty()
                 status_text.empty()
                 
+                # Show final results with geocoding info
+                geocoded_places = len([e for e in entities if e.get('latitude') is not None])
+                total_places = len([e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']])
+                
                 # Show context analysis results
+                success_message = f"Processing complete! Found {len(entities)} entities"
+                if total_places > 0:
+                    success_message += f" ({geocoded_places}/{total_places} places geocoded)"
+                
+                st.success(success_message)
+                
                 if text_context['period'] or text_context['region'] or text_context['subject_matter']:
-                    st.success(f"Processing complete! Found {len(entities)} entities.")
                     context_info = []
                     if text_context['period']:
                         context_info.append(f"Period: {text_context['period'].replace('_', ' ').title()}")
@@ -1247,8 +1266,6 @@ class StreamlitLLMEntityLinker:
                         context_info.append(f"Subject: {text_context['subject_matter'].title()}")
                     
                     st.info(f"Context detected: {' | '.join(context_info)}")
-                else:
-                    st.success(f"Processing complete! Found {len(entities)} entities.")
                 
             except Exception as e:
                 st.error(f"Error processing text: {e}")
@@ -1387,7 +1404,7 @@ class StreamlitLLMEntityLinker:
             self.render_export_section(entities)
 
     def render_entity_table(self, entities: List[Dict[str, Any]]):
-        """Render a table of entity details - same as NLTK app."""
+        """Render a table of entity details with improved coordinate display."""
         if not entities:
             st.info("No entities found.")
             return
@@ -1401,26 +1418,58 @@ class StreamlitLLMEntityLinker:
                 'Links': self.format_entity_links(entity)
             }
             
+            # Add description from various sources
             if entity.get('wikidata_description'):
-                row['Description'] = entity['wikidata_description']
+                row['Description'] = entity['wikidata_description'][:150] + "..." if len(entity['wikidata_description']) > 150 else entity['wikidata_description']
             elif entity.get('wikipedia_description'):
-                row['Description'] = entity['wikipedia_description']
+                row['Description'] = entity['wikipedia_description'][:150] + "..." if len(entity['wikipedia_description']) > 150 else entity['wikipedia_description']
             elif entity.get('britannica_title'):
                 row['Description'] = entity['britannica_title']
+            else:
+                row['Description'] = "No description available"
             
-            if entity.get('latitude'):
+            # Add coordinates if available - this was the missing part!
+            if entity.get('latitude') is not None and entity.get('longitude') is not None:
                 row['Coordinates'] = f"{entity['latitude']:.4f}, {entity['longitude']:.4f}"
-                row['Location'] = entity.get('location_name', '')
+                
+                # Add location name if available
+                if entity.get('location_name'):
+                    row['Location'] = entity['location_name'][:100] + "..." if len(entity['location_name']) > 100 else entity['location_name']
+                else:
+                    row['Location'] = "Coordinates only"
+                    
+                # Add geocoding source for debugging
+                if entity.get('geocoding_source'):
+                    row['Geocoding Source'] = entity['geocoding_source']
+            else:
+                # Show that geocoding was attempted but failed for place entities
+                if entity['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']:
+                    row['Coordinates'] = "Not found"
+                    row['Location'] = "Geocoding failed"
             
             table_data.append(row)
         
         # Create DataFrame and display
         df = pd.DataFrame(table_data)
-        st.dataframe(df, use_container_width=True)
+        
+        # Make the table more readable on mobile
+        st.dataframe(
+            df, 
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Add summary statistics
+        total_entities = len(entities)
+        place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']]
+        geocoded_entities = [e for e in place_entities if e.get('latitude') is not None]
+        
+        st.info(f"**Summary:** {total_entities} total entities | {len(place_entities)} place entities | {len(geocoded_entities)} geocoded successfully")
 
     def format_entity_links(self, entity: Dict[str, Any]) -> str:
-        """Format entity links for display in table - same as NLTK app."""
+        """Format entity links for display in table with better formatting."""
         links = []
+        
         if entity.get('wikipedia_url'):
             links.append("Wikipedia")
         if entity.get('wikidata_url'):
@@ -1429,7 +1478,12 @@ class StreamlitLLMEntityLinker:
             links.append("Britannica")
         if entity.get('openstreetmap_url'):
             links.append("OpenStreetMap")
-        return " | ".join(links) if links else "No links"
+        
+        if not links:
+            return "No links"
+        
+        return " | ".join(links)
+
 
     def render_export_section(self, entities: List[Dict[str, Any]]):
         """Render export options for the results - same as NLTK app."""
