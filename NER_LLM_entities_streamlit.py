@@ -1404,7 +1404,7 @@ class StreamlitLLMEntityLinker:
             self.render_export_section(entities)
 
     def render_entity_table(self, entities: List[Dict[str, Any]]):
-        """Render a table of entity details with improved coordinate display."""
+        """Render a table of entity details - same as original but with fixed coordinate display."""
         if not entities:
             st.info("No entities found.")
             return
@@ -1418,53 +1418,23 @@ class StreamlitLLMEntityLinker:
                 'Links': self.format_entity_links(entity)
             }
             
-            # Add description from various sources
             if entity.get('wikidata_description'):
-                row['Description'] = entity['wikidata_description'][:150] + "..." if len(entity['wikidata_description']) > 150 else entity['wikidata_description']
+                row['Description'] = entity['wikidata_description']
             elif entity.get('wikipedia_description'):
-                row['Description'] = entity['wikipedia_description'][:150] + "..." if len(entity['wikipedia_description']) > 150 else entity['wikipedia_description']
+                row['Description'] = entity['wikipedia_description']
             elif entity.get('britannica_title'):
                 row['Description'] = entity['britannica_title']
-            else:
-                row['Description'] = "No description available"
             
-            # Add coordinates if available - this was the missing part!
-            if entity.get('latitude') is not None and entity.get('longitude') is not None:
+            # Fix: Check if latitude is not None instead of just truthy
+            if entity.get('latitude') is not None:
                 row['Coordinates'] = f"{entity['latitude']:.4f}, {entity['longitude']:.4f}"
-                
-                # Add location name if available
-                if entity.get('location_name'):
-                    row['Location'] = entity['location_name'][:100] + "..." if len(entity['location_name']) > 100 else entity['location_name']
-                else:
-                    row['Location'] = "Coordinates only"
-                    
-                # Add geocoding source for debugging
-                if entity.get('geocoding_source'):
-                    row['Geocoding Source'] = entity['geocoding_source']
-            else:
-                # Show that geocoding was attempted but failed for place entities
-                if entity['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']:
-                    row['Coordinates'] = "Not found"
-                    row['Location'] = "Geocoding failed"
+                row['Location'] = entity.get('location_name', '')
             
             table_data.append(row)
         
         # Create DataFrame and display
         df = pd.DataFrame(table_data)
-        
-        # Make the table more readable on mobile
-        st.dataframe(
-            df, 
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # Add summary statistics
-        total_entities = len(entities)
-        place_entities = [e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']]
-        geocoded_entities = [e for e in place_entities if e.get('latitude') is not None]
-        
-        st.info(f"**Summary:** {total_entities} total entities | {len(place_entities)} place entities | {len(geocoded_entities)} geocoded successfully")
+        st.dataframe(df, use_container_width=True)
 
     def format_entity_links(self, entity: Dict[str, Any]) -> str:
         """Format entity links for display in table with better formatting."""
