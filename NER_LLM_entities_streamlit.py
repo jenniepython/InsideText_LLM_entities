@@ -332,23 +332,13 @@ Output (JSON array only):
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
-            # Convert to consistent format and remove duplicates
+            # Convert to consistent format - REMOVED DUPLICATE REMOVAL
             entities = []
-            seen_entities = set()  # Track (text, type) pairs to avoid duplicates
             
             for entity_raw in entities_raw:
                 if 'text' in entity_raw and 'type' in entity_raw:
                     entity_text = entity_raw['text'].strip()
                     entity_type = entity_raw['type']
-                    
-                    # Create unique key for duplicate detection
-                    unique_key = (entity_text.lower(), entity_type)
-                    
-                    # Skip if we've already seen this entity
-                    if unique_key in seen_entities:
-                        continue
-                    
-                    seen_entities.add(unique_key)
                     
                     # Find actual position in text
                     start_pos = text.find(entity_text)
