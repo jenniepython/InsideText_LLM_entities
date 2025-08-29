@@ -1041,7 +1041,7 @@ class StreamlitLLMEntityLinker:
     def process_text(self, text: str, title: str):
         """
         Process the input text using the LLM EntityLinker with enhanced geocoding feedback.
-        Fixed to preserve entity links during geocoding.
+        Fixed to preserve entity links during geocoding and report accurate counts.
         """
         if not text.strip():
             st.warning("Please enter some text to analyse.")
@@ -1173,14 +1173,31 @@ class StreamlitLLMEntityLinker:
                 progress_bar.empty()
                 status_text.empty()
                 
-                # Show final results with geocoding info
-                geocoded_places = len([e for e in entities if e.get('latitude') is not None])
-                total_places = len([e for e in entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']])
+                # Count only entities that will be highlighted (have links or coordinates)
+                linked_entities = []
+                for entity in entities:
+                    has_links = (entity.get('britannica_url') or 
+                                entity.get('wikidata_url') or 
+                                entity.get('wikipedia_url') or     
+                                entity.get('openstreetmap_url'))
+                    has_coordinates = entity.get('latitude') is not None
+                    
+                    if has_links or has_coordinates:
+                        linked_entities.append(entity)
                 
-                # Show context analysis results
-                success_message = f"Processing complete! Found {len(entities)} entities"
+                # Calculate geocoding stats for linked entities only
+                geocoded_places = len([e for e in linked_entities if e.get('latitude') is not None])
+                total_places = len([e for e in linked_entities if e['type'] in ['GPE', 'LOCATION', 'FACILITY', 'ADDRESS']])
+                
+                # Show success message that matches what's actually highlighted
+                success_message = f"Processing complete! Found {len(linked_entities)} linked entities"
                 if total_places > 0:
                     success_message += f" ({geocoded_places}/{total_places} places geocoded)"
+                
+                # Optionally, show info about unlinked entities
+                unlinked_count = len(entities) - len(linked_entities)
+                if unlinked_count > 0:
+                    success_message += f" ({unlinked_count} entities found but not linked)"
                 
                 st.success(success_message)
                 
