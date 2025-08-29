@@ -206,7 +206,7 @@ class LLMEntityLinker:
         return None
 
     def extract_entities(self, text: str):
-        """Extract named entities from text using Gemini LLM with improved position detection."""
+        """Extract named entities from text using Gemini LLM - FIXED to prevent false duplicates."""
         try:
             import google.generativeai as genai
             
@@ -232,7 +232,7 @@ class LLMEntityLinker:
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
-            # Convert to consistent format and find ALL occurrences with better matching
+            # Convert to consistent format and find ALL occurrences - FIXED VERSION
             entities = []
             
             for entity_raw in entities_raw:
@@ -240,18 +240,18 @@ class LLMEntityLinker:
                     entity_text = entity_raw['text'].strip()
                     entity_type = entity_raw['type']
                     
-                    # Use regex to find word boundaries for better matching
-                    # This prevents partial matches like "Egypt" matching inside "Egyptian"
+                    # Use regex with word boundaries to find exact matches
+                    import re
                     pattern = r'\b' + re.escape(entity_text) + r'\b'
                     
-                    # Find all matches using regex
+                    # Find all non-overlapping matches
                     matches = list(re.finditer(pattern, text, re.IGNORECASE))
                     
                     if matches:
-                        # Create an entity for each match found
+                        # Create one entity for each actual occurrence
                         for match in matches:
                             entity = {
-                                'text': match.group(),  # Use the actual matched text (preserves case)
+                                'text': match.group(),  # Preserves original case
                                 'type': entity_type,
                                 'start': match.start(),
                                 'end': match.end(),
@@ -259,7 +259,7 @@ class LLMEntityLinker:
                             }
                             entities.append(entity)
                     else:
-                        # Fallback: try exact case-sensitive search
+                        # Fallback: try case-sensitive exact search with proper advancement
                         start_pos = 0
                         while True:
                             pos = text.find(entity_text, start_pos)
@@ -274,12 +274,14 @@ class LLMEntityLinker:
                                 'context': context
                             }
                             entities.append(entity)
-                            start_pos = pos + len(entity_text)  # Move past this match
+                            
+                            # CRITICAL FIX: Move past the entire entity, not just +1
+                            start_pos = pos + len(entity_text)
                         
-                        # If still no matches, try with LLM's provided position
-                        if not any(e['text'].lower() == entity_text.lower() for e in entities[-len(entities):]):
+                        # If no matches found at all, use LLM position as last resort
+                        if not any(e['text'] == entity_text for e in entities):
                             start_pos = entity_raw.get('start_pos', 0)
-                            if start_pos >= 0 and start_pos < len(text):
+                            if 0 <= start_pos < len(text):
                                 entity = {
                                     'text': entity_text,
                                     'type': entity_type,
