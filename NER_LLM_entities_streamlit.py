@@ -206,7 +206,7 @@ class LLMEntityLinker:
         return None
 
     def extract_entities(self, text: str):
-        """Extract named entities from text using Gemini LLM with context awareness."""
+        """Extract named entities from text using Gemini LLM with improved position detection."""
         try:
             import google.generativeai as genai
             
@@ -232,7 +232,7 @@ class LLMEntityLinker:
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
-            # Convert to consistent format and find ALL occurrences
+            # Convert to consistent format and find ALL occurrences with better matching
             entities = []
             
             for entity_raw in entities_raw:
@@ -240,38 +240,54 @@ class LLMEntityLinker:
                     entity_text = entity_raw['text'].strip()
                     entity_type = entity_raw['type']
                     
-                    # Find ALL occurrences of this entity text in the original text
-                    start_pos = 0
-                    while True:
-                        pos = text.find(entity_text, start_pos)
-                        if pos == -1:
-                            break
-                        
-                        # Create an entity for each occurrence
-                        entity = {
-                            'text': entity_text,
-                            'type': entity_type,
-                            'start': pos,
-                            'end': pos + len(entity_text),
-                            'context': context  # Store context for linking
-                        }
-                        entities.append(entity)
-                        
-                        # Move start position forward to find next occurrence
-                        start_pos = pos + 1
+                    # Use regex to find word boundaries for better matching
+                    # This prevents partial matches like "Egypt" matching inside "Egyptian"
+                    pattern = r'\b' + re.escape(entity_text) + r'\b'
                     
-                    # If no occurrences found with exact match, try with the LLM's provided position
-                    if not any(e['text'] == entity_text for e in entities):
-                        start_pos = entity_raw.get('start_pos', 0)
-                        if start_pos >= 0 and start_pos < len(text):
+                    # Find all matches using regex
+                    matches = list(re.finditer(pattern, text, re.IGNORECASE))
+                    
+                    if matches:
+                        # Create an entity for each match found
+                        for match in matches:
                             entity = {
-                                'text': entity_text,
+                                'text': match.group(),  # Use the actual matched text (preserves case)
                                 'type': entity_type,
-                                'start': start_pos,
-                                'end': start_pos + len(entity_text),
+                                'start': match.start(),
+                                'end': match.end(),
                                 'context': context
                             }
                             entities.append(entity)
+                    else:
+                        # Fallback: try exact case-sensitive search
+                        start_pos = 0
+                        while True:
+                            pos = text.find(entity_text, start_pos)
+                            if pos == -1:
+                                break
+                            
+                            entity = {
+                                'text': entity_text,
+                                'type': entity_type,
+                                'start': pos,
+                                'end': pos + len(entity_text),
+                                'context': context
+                            }
+                            entities.append(entity)
+                            start_pos = pos + len(entity_text)  # Move past this match
+                        
+                        # If still no matches, try with LLM's provided position
+                        if not any(e['text'].lower() == entity_text.lower() for e in entities[-len(entities):]):
+                            start_pos = entity_raw.get('start_pos', 0)
+                            if start_pos >= 0 and start_pos < len(text):
+                                entity = {
+                                    'text': entity_text,
+                                    'type': entity_type,
+                                    'start': start_pos,
+                                    'end': start_pos + len(entity_text),
+                                    'context': context
+                                }
+                                entities.append(entity)
             
             return entities
             
