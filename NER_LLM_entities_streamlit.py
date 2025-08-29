@@ -117,149 +117,49 @@ class LLMEntityLinker:
         }
 
     def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
-        """Construct a context-aware NER prompt that works for any text."""
+        """Construct a simplified NER prompt that works consistently."""
         
-        # analyse context if not provided
-        if context is None:
-            context = self.analyse_text_context(text)
+        prompt = f"""Extract named entities from the following text. Only extract proper nouns and named things.
+    
+    ENTITY TYPES:
+    - PERSON: Named individuals (e.g., "John Smith", "Caesar")
+    - ORGANIZATION: Named groups, companies, civilizations (e.g., "Apple Inc", "the Phoenicians") 
+    - GPE: Countries, cities, regions (e.g., "France", "London", "ancient Egypt")
+    - LOCATION: Geographic features (e.g., "Red Sea", "Mount Everest")
+    - FACILITY: Named buildings, venues (e.g., "Empire State Building")
+    - PRODUCT: Named objects, brands (e.g., "iPhone", "merchandise" only if specifically named)
+    - EVENT: Named events (e.g., "World War II", "the Olympics")
+    - WORK_OF_ART: Titles of books, movies, songs, etc.
+    - DATE: Specific dates, years, periods
+    - MONEY: Specific amounts with currency
+    
+    RULES:
+    1. Only extract proper nouns - things with specific names
+    2. Don't extract adjectives or descriptive words (e.g., skip "Egyptian" in "Egyptian goods")
+    3. Don't extract common job titles or roles unless they're part of a proper name
+    4. Don't extract generic terms like "king", "merchants", "women" unless they're part of a proper name
+    
+    EXAMPLES:
+    
+    Input: "The Roman merchants sailed to Egypt with their cargo."
+    Output: [
+      {{"text": "Roman", "type": "ORGANIZATION", "start_pos": 4}},
+      {{"text": "Egypt", "type": "GPE", "start_pos": 29}}
+    ]
+    
+    Input: "John visited the British Museum in London yesterday."
+    Output: [
+      {{"text": "John", "type": "PERSON", "start_pos": 0}},
+      {{"text": "British Museum", "type": "FACILITY", "start_pos": 18}},
+      {{"text": "London", "type": "GPE", "start_pos": 36}}
+    ]
+    
+    Now extract entities from this text:
+    
+    "{text}"
+    
+    Output only a JSON array with the entities found:"""
         
-        # Create dynamic context instructions based on detected patterns
-        context_instructions = ""
-        
-        # Add period-based instructions
-        if context.get('period') == 'ancient':
-            context_instructions += """
-ANCIENT/HISTORICAL CONTEXT DETECTED:
-- Place names in historical contexts = ancient locations (GPE), not modern companies
-- Ancient peoples (like Phoenicians, Romans, etc.) = civilizations (ORGANIZATION)
-- If people "came to", "sailed to", "traveled to" a place → that place is GPE/LOCATION
-- Names ending in -us, -os, -es often = ancient people or places
-- Kings, emperors, pharaohs = historical figures (PERSON)
-"""
-        elif context.get('period') in ['medieval', 'victorian']:
-            context_instructions += f"""
-{context.get('period').upper()} PERIOD CONTEXT DETECTED:
-- Historical building names = period facilities (FACILITY)
-- Technical/architectural terms = historical products/features (PRODUCT)
-- Period-appropriate interpretation of ambiguous names
-"""
-        
-        # Add subject matter instructions
-        if context.get('subject_matter') == 'theater':
-            context_instructions += """
-THEATER CONTEXT DETECTED:
-- Stage terminology (mezzanine, proscenium, trap, etc.) = technical features (PRODUCT)
-- Theater names = performance venues (FACILITY) 
-- Play titles = works of art (WORK_OF_ART)
-- Performers, directors = people (PERSON)
-"""
-        elif context.get('subject_matter') == 'architecture':
-            context_instructions += """
-ARCHITECTURE CONTEXT DETECTED:
-- Building components, materials = architectural products (PRODUCT)
-- Architectural styles, periods = historical context
-- Building names = facilities (FACILITY)
-"""
-        elif context.get('subject_matter') == 'literature':
-            context_instructions += """
-LITERATURE CONTEXT DETECTED:
-- Book titles, manuscript names = works of art (WORK_OF_ART)
-- Authors, poets, writers = people (PERSON)
-- Literary characters = people (PERSON) if clearly fictional
-"""
-        
-        # Add geographical context
-        if context.get('region'):
-            region_name = context['region'].replace('_', ' ').title()
-            context_instructions += f"""
-GEOGRAPHICAL CONTEXT: {region_name}
-- Interpret place names in appropriate regional/cultural context
-- Historical places should link to period-appropriate entries
-"""
-        
-        # Dynamic examples based on detected context
-        examples = """
-Examples:
-
-Text: "The merchants sailed from their homeland to the great city, bringing goods to trade with the local rulers."
-Context: Historical/ancient context detected
-Output:
-[
-    {"text": "merchants", "type": "PERSON", "start_pos": 4},
-    {"text": "homeland", "type": "LOCATION", "start_pos": 27},
-    {"text": "great city", "type": "GPE", "start_pos": 44},
-    {"text": "rulers", "type": "PERSON", "start_pos": 97}
-]
-
-Text: "The theater's main stage featured a revolving platform and hydraulic lifts for scene changes."
-Context: Theater context detected
-Output:
-[
-    {"text": "theater", "type": "FACILITY", "start_pos": 4},
-    {"text": "main stage", "type": "PRODUCT", "start_pos": 14},
-    {"text": "revolving platform", "type": "PRODUCT", "start_pos": 35},
-    {"text": "hydraulic lifts", "type": "PRODUCT", "start_pos": 58}
-]
-
-Text: "The manuscript contains poems written by the court poet during the reign of King Edward."
-Context: Literature/historical context detected
-Output:
-[
-    {"text": "manuscript", "type": "WORK_OF_ART", "start_pos": 4},
-    {"text": "poems", "type": "WORK_OF_ART", "start_pos": 24},
-    {"text": "court poet", "type": "PERSON", "start_pos": 45},
-    {"text": "King Edward", "type": "PERSON", "start_pos": 75}
-]
-"""
-        
-        prompt = f"""You are an expert named entity recognition system that adapts to different text types and contexts. Your task is to identify and extract ALL relevant entities while interpreting them correctly based on context.
-
-{context_instructions}
-
-CORE CONTEXTUAL RULES (apply to ANY text):
-1. If people "went to", "came to", "sailed to", "traveled to" a place → that place is GPE/LOCATION
-2. In historical contexts, interpret names as historical entities, not modern companies
-3. Technical terms related to the subject matter = PRODUCT (tools, components, features)
-4. Titles of creative works = WORK_OF_ART
-5. Names of buildings, venues, institutions = FACILITY
-6. Groups of people, civilizations, organizations = ORGANIZATION
-7. Individual people, historical figures, characters = PERSON
-8. IMPORTANT: Adjectives and demonyms (Egyptian, Persian, Greek, Roman, etc.) when used as modifiers (e.g., "Egyptian merchandise", "Persian learned men") should NOT be tagged as entities. Only tag them when they refer to the people as a group (e.g., "The Egyptians built pyramids")
-9. Only extract proper nouns and named entities, not common descriptive adjectives
-
-ENTITY TYPES:
-- PERSON: Individual people, historical figures, characters, roles with names (e.g., "Io", "Inachus", NOT "daughter" or "king" without names)
-- ORGANIZATION: Named groups, institutions, civilizations, companies, teams (e.g., "Phoenicians" as a people, NOT "Egyptian" as an adjective)
-- GPE: Cities, countries, regions, kingdoms, territories, political entities (e.g., "Egypt", "Argos", "Hellas")
-- LOCATION: Geographic places, landmarks, natural features (e.g., "Red Sea", specific named locations)
-- FACILITY: Buildings, venues, structures, stages, theaters
-- ADDRESS: Street addresses, property descriptions
-- PRODUCT: Objects, tools, components, materials, technical features (NOT "merchandise" or "cargo" unless specifically named)
-- EVENT: Named events, ceremonies, performances, battles
-- WORK_OF_ART: Books, plays, poems, manuscripts, artworks
-- LANGUAGE: Languages, dialects, scripts
-- LAW: Legal documents, laws, regulations
-- DATE: Specific dates, periods, years, eras, reigns
-- MONEY: Currencies, amounts, prices
-
-CRITICAL RULES FOR HISTORICAL TEXTS:
-- "Phoenicians", "Persians", "Greeks", "Egyptians" = ORGANIZATION only when referring to the people as a group
-- "Egyptian merchandise", "Persian learned men", "Greek ships" = DO NOT tag the adjectives
-- Place names like "Egypt", "Persia", "Greece", "Argos" = GPE
-- Named individuals like "Io", "Inachus" = PERSON
-- Unnamed roles like "the king", "the daughter" without names = DO NOT tag
-- "Red Sea" or similar named bodies of water = LOCATION
-
-{examples}
-
-Now extract entities from this text, using context clues to determine correct interpretations:
-
-Text: "{text}"
-
-Remember: Only extract clear named entities. Avoid tagging adjectives, demonyms when used as modifiers, or generic terms.
-
-Output (JSON array only):
-"""
         return prompt
 
     def extract_json_from_response(self, response_text):
