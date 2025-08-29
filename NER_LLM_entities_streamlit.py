@@ -332,7 +332,7 @@ Output (JSON array only):
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
-            # Convert to consistent format - REMOVED DUPLICATE REMOVAL
+            # Convert to consistent format and find ALL occurrences
             entities = []
             
             for entity_raw in entities_raw:
@@ -340,20 +340,38 @@ Output (JSON array only):
                     entity_text = entity_raw['text'].strip()
                     entity_type = entity_raw['type']
                     
-                    # Find actual position in text
-                    start_pos = text.find(entity_text)
-                    if start_pos == -1:
-                        # Try with start_pos from LLM if provided
-                        start_pos = entity_raw.get('start_pos', 0)
+                    # Find ALL occurrences of this entity text in the original text
+                    start_pos = 0
+                    while True:
+                        pos = text.find(entity_text, start_pos)
+                        if pos == -1:
+                            break
+                        
+                        # Create an entity for each occurrence
+                        entity = {
+                            'text': entity_text,
+                            'type': entity_type,
+                            'start': pos,
+                            'end': pos + len(entity_text),
+                            'context': context  # Store context for linking
+                        }
+                        entities.append(entity)
+                        
+                        # Move start position forward to find next occurrence
+                        start_pos = pos + 1
                     
-                    entity = {
-                        'text': entity_text,
-                        'type': entity_type,
-                        'start': start_pos,
-                        'end': start_pos + len(entity_text),
-                        'context': context  # Store context for linking
-                    }
-                    entities.append(entity)
+                    # If no occurrences found with exact match, try with the LLM's provided position
+                    if not any(e['text'] == entity_text for e in entities):
+                        start_pos = entity_raw.get('start_pos', 0)
+                        if start_pos >= 0 and start_pos < len(text):
+                            entity = {
+                                'text': entity_text,
+                                'type': entity_type,
+                                'start': start_pos,
+                                'end': start_pos + len(entity_text),
+                                'context': context
+                            }
+                            entities.append(entity)
             
             return entities
             
