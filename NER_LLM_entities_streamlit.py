@@ -120,45 +120,46 @@ class LLMEntityLinker:
         """Construct a simplified NER prompt that works consistently."""
         
         prompt = f"""Extract named entities from the following text. Only extract proper nouns and named things.
-    
-    ENTITY TYPES:
-    - PERSON: Named individuals (e.g., "John Smith", "Caesar")
-    - ORGANIZATION: Named groups, companies, civilizations (e.g., "Apple Inc", "the Phoenicians") 
-    - GPE: Countries, cities, regions (e.g., "France", "London", "ancient Egypt")
-    - LOCATION: Geographic features (e.g., "Red Sea", "Mount Everest")
-    - FACILITY: Named buildings, venues (e.g., "Empire State Building")
-    - PRODUCT: Named objects, brands (e.g., "iPhone", "merchandise" only if specifically named)
-    - EVENT: Named events (e.g., "World War II", "the Olympics")
-    - WORK_OF_ART: Titles of books, movies, songs, etc.
-    - DATE: Specific dates, years, periods
-    - MONEY: Specific amounts with currency
-    
-    RULES:
-    1. Only extract proper nouns - things with specific names
-    2. Don't extract adjectives or descriptive words (e.g., skip "Egyptian" in "Egyptian goods")
-    3. Don't extract common job titles or roles unless they're part of a proper name
-    4. Don't extract generic terms like "king", "merchants", "women" unless they're part of a proper name
-    
-    EXAMPLES:
-    
-    Input: "The Roman merchants sailed to Egypt with their cargo."
-    Output: [
-      {{"text": "Roman", "type": "ORGANIZATION", "start_pos": 4}},
-      {{"text": "Egypt", "type": "GPE", "start_pos": 29}}
-    ]
-    
-    Input: "John visited the British Museum in London yesterday."
-    Output: [
-      {{"text": "John", "type": "PERSON", "start_pos": 0}},
-      {{"text": "British Museum", "type": "FACILITY", "start_pos": 18}},
-      {{"text": "London", "type": "GPE", "start_pos": 36}}
-    ]
-    
-    Now extract entities from this text:
-    
-    "{text}"
-    
-    Output only a JSON array with the entities found:"""
+
+ENTITY TYPES:
+- PERSON: Named individuals (e.g., "John Smith", "Caesar")
+- ORGANIZATION: Named groups, companies, civilizations (e.g., "Apple Inc", "the Phoenicians") 
+- GPE: Countries, cities, regions (e.g., "France", "London", "ancient Egypt")
+- LOCATION: Geographic features (e.g., "Red Sea", "Mount Everest")
+- FACILITY: Named buildings, venues (e.g., "Empire State Building")
+- PRODUCT: Named objects, brands (e.g., "iPhone", "merchandise" only if specifically named)
+- EVENT: Named events (e.g., "World War II", "the Olympics")
+- WORK_OF_ART: Titles of books, movies, songs, etc.
+- DATE: Specific dates, years, periods
+- MONEY: Specific amounts with currency
+
+RULES:
+1. Only extract proper nouns - things with specific names
+2. Don't extract adjectives or descriptive words (e.g., skip "Egyptian" in "Egyptian goods")
+3. Don't extract common job titles or roles unless they're part of a proper name
+4. Don't extract generic terms like "king", "merchants", "women" unless they're part of a proper name
+5. IMPORTANT: Only list each unique entity ONCE in your response, even if it appears multiple times in the text
+
+EXAMPLES:
+
+Input: "The Roman merchants sailed to Egypt with their cargo."
+Output: [
+  {{"text": "Roman", "type": "ORGANIZATION", "start_pos": 4}},
+  {{"text": "Egypt", "type": "GPE", "start_pos": 29}}
+]
+
+Input: "John visited the British Museum in London yesterday."
+Output: [
+  {{"text": "John", "type": "PERSON", "start_pos": 0}},
+  {{"text": "British Museum", "type": "FACILITY", "start_pos": 18}},
+  {{"text": "London", "type": "GPE", "start_pos": 36}}
+]
+
+Now extract entities from this text:
+
+"{text}"
+
+Output only a JSON array with the entities found:"""
         
         return prompt
 
@@ -232,6 +233,23 @@ class LLMEntityLinker:
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
+            # Deduplicate entities from LLM response FIRST
+            seen_entities = set()
+            deduplicated_entities_raw = []
+            
+            for entity in entities_raw:
+                if 'text' in entity and 'type' in entity:
+                    entity_key = (entity['text'].strip().lower(), entity['type'])
+                    if entity_key not in seen_entities:
+                        seen_entities.add(entity_key)
+                        deduplicated_entities_raw.append(entity)
+            
+            # DEBUG: Show deduplication results
+            if len(entities_raw) != len(deduplicated_entities_raw):
+                st.info(f"DEBUG: LLM returned {len(entities_raw)} entities, deduplicated to {len(deduplicated_entities_raw)}")
+            
+            entities_raw = deduplicated_entities_raw
+            
             # Convert to consistent format and find ALL occurrences - FIXED VERSION
             entities = []
             
@@ -279,7 +297,7 @@ class LLMEntityLinker:
                             start_pos = pos + len(entity_text)
                         
                         # If no matches found at all, use LLM position as last resort
-                        if not any(e['text'] == entity_text for e in entities):
+                        if not any(e['text'].lower() == entity_text.lower() for e in entities):
                             start_pos = entity_raw.get('start_pos', 0)
                             if 0 <= start_pos < len(text):
                                 entity = {
@@ -1339,6 +1357,7 @@ class StreamlitLLMEntityLinker:
         return ''.join(result)
 
     def render_results(self):
+    def render_results(self):
         """Render the results section with entities and visualisations - same as NLTK app."""
         if not st.session_state.entities:
             st.info("Enter some text above and click 'Process Text' to see results.")
@@ -1416,7 +1435,6 @@ class StreamlitLLMEntityLinker:
             return "No links"
         
         return " | ".join(links)
-
 
     def render_export_section(self, entities: List[Dict[str, Any]]):
         """Render export options for the results - same as NLTK app."""
