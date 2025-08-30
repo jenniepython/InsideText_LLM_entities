@@ -1385,14 +1385,17 @@ class StreamlitLLMEntityLinker:
             self.render_export_section(entities)
 
     def render_entity_table(self, entities: List[Dict[str, Any]]):
-        """Render a table of entity details - same as original but with fixed coordinate display."""
+        """Render a table of entity details - sorted by start position in text."""
         if not entities:
             st.info("No entities found.")
             return
         
+        # Sort entities by start position to match text order
+        sorted_entities = sorted(entities, key=lambda x: x.get('start', 0))
+        
         # Prepare data for table
         table_data = []
-        for entity in entities:
+        for entity in sorted_entities:
             row = {
                 'Entity': entity['text'],
                 'Type': entity['type'],
