@@ -1357,7 +1357,6 @@ class StreamlitLLMEntityLinker:
         return ''.join(result)
 
     def render_results(self):
-    def render_results(self):
         """Render the results section with entities and visualisations - same as NLTK app."""
         if not st.session_state.entities:
             st.info("Enter some text above and click 'Process Text' to see results.")
