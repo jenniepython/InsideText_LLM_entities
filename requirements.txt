@@ -8,3 +8,4 @@ streamlit-authenticator
 plotly
 pyyaml
 google-generativeai
+pycountry
