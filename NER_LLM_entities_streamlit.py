@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Streamlit LLM Entity Linker Application - Enhanced Version
+Streamlit LLM Entity Linker Application - Enhanced Version with Overlap Resolution
 
 Enhanced with:
 1. Geocoding only for place entities (GPE, LOCATION, FACILITY, ADDRESS)
 2. Contextual linking using surrounding words for better knowledge base disambiguation
+3. Fixed overlapping entity extraction (no more duplicate Amazon, etc.)
 
 Author: Enhanced from NER_LLM_entities_streamlit.py
-Version: 2.1
+Version: 2.2
 """
 
 import streamlit as st
@@ -97,11 +98,12 @@ MODEL_OPTIONS = {
 
 class LLMEntityLinker:
     """
-    Main class for LLM-based entity linking functionality with contextual linking.
+    Main class for LLM-based entity linking functionality with contextual linking and overlap resolution.
     
     Enhanced with:
     - Geocoding only for place entities
     - Contextual linking using surrounding words for better disambiguation
+    - Fixed overlapping entity extraction
     """
     
     def __init__(self):
@@ -170,7 +172,7 @@ class LLMEntityLinker:
         }
 
     def construct_ner_prompt(self, text: str, context: Dict[str, Any] = None):
-        """Construct a simplified NER prompt that works consistently."""
+        """Construct an improved NER prompt that avoids substring overlaps."""
         
         prompt = f"""Extract named entities from the following text. Only extract proper nouns and named things.
 
@@ -178,7 +180,7 @@ ENTITY TYPES:
 - PERSON: Named individuals (e.g., "John Smith", "Caesar")
 - ORGANIZATION: Named groups, companies, civilizations (e.g., "Apple Inc", "the Phoenicians") 
 - GPE: Countries, cities, regions (e.g., "France", "London", "ancient Egypt")
-- LOCATION: Geographic features (e.g., "Red Sea", "Mount Everest")
+- LOCATION: Geographic features (e.g., "Red Sea", "Mount Everest", "Amazon rainforest")
 - FACILITY: Named buildings, venues (e.g., "Empire State Building")
 - PRODUCT: Named objects, brands (e.g., "iPhone", "merchandise" only if specifically named)
 - EVENT: Named events (e.g., "World War II", "the Olympics")
@@ -186,12 +188,15 @@ ENTITY TYPES:
 - DATE: Specific dates, years, periods
 - MONEY: Specific amounts with currency
 
-RULES:
+CRITICAL RULES:
 1. Only extract proper nouns - things with specific names
 2. Don't extract adjectives or descriptive words (e.g., skip "Egyptian" in "Egyptian goods")
 3. Don't extract common job titles or roles unless they're part of a proper name
 4. Don't extract generic terms like "king", "merchants", "women" unless they're part of a proper name
 5. IMPORTANT: Only list each unique entity ONCE in your response, even if it appears multiple times in the text
+6. CRITICAL: When you find a compound entity like "Amazon rainforest", do NOT also extract just "Amazon" separately
+7. CRITICAL: Choose the most complete and specific form of each entity (e.g., prefer "Amazon rainforest" over "Amazon" when referring to the location)
+8. CRITICAL: If the same word appears in different contexts (like "Amazon rainforest" vs "Amazon company"), extract both as separate entities
 
 EXAMPLES:
 
@@ -201,11 +206,17 @@ Output: [
   {{"text": "Egypt", "type": "GPE", "start_pos": 29}}
 ]
 
-Input: "John visited the British Museum in London yesterday."
+Input: "At dinner, a guest spoke about the Amazon rainforest, but her friend assumed she was talking about Amazon, the company."
 Output: [
-  {{"text": "John", "type": "PERSON", "start_pos": 0}},
-  {{"text": "British Museum", "type": "FACILITY", "start_pos": 18}},
-  {{"text": "London", "type": "GPE", "start_pos": 36}}
+  {{"text": "Amazon rainforest", "type": "LOCATION", "start_pos": 39}},
+  {{"text": "Amazon", "type": "ORGANIZATION", "start_pos": 98}}
+]
+
+Input: "Jordan River flows through Jordan, and my friend Jordan visited there."
+Output: [
+  {{"text": "Jordan River", "type": "LOCATION", "start_pos": 0}},
+  {{"text": "Jordan", "type": "GPE", "start_pos": 21}},
+  {{"text": "Jordan", "type": "PERSON", "start_pos": 46}}
 ]
 
 Now extract entities from this text:
@@ -259,8 +270,55 @@ Output only a JSON array with the entities found:"""
         
         return None
 
+    def _remove_overlapping_entities(self, entities):
+        """
+        Remove overlapping entities, keeping the longer/more specific ones.
+        
+        For example, if we have both "Amazon rainforest" and "Amazon", 
+        we keep "Amazon rainforest" and remove the "Amazon" that overlaps with it.
+        """
+        if not entities:
+            return entities
+            
+        # Sort entities by start position and length (longer first for same position)
+        sorted_entities = sorted(entities, key=lambda x: (x['start'], -(x['end'] - x['start'])))
+        
+        non_overlapping = []
+        
+        for entity in sorted_entities:
+            # Check if this entity overlaps with any already accepted entity
+            overlaps = False
+            for i, accepted in enumerate(non_overlapping):
+                # Check for overlap: entities overlap if one starts before the other ends
+                if not (entity['end'] <= accepted['start'] or entity['start'] >= accepted['end']):
+                    overlaps = True
+                    
+                    # If the current entity is longer and completely contains the accepted one, replace it
+                    current_length = entity['end'] - entity['start']
+                    accepted_length = accepted['end'] - accepted['start']
+                    
+                    if current_length > accepted_length:
+                        # Remove the shorter entity and add the longer one
+                        non_overlapping.pop(i)
+                        non_overlapping.append(entity)
+                        overlaps = False  # We've handled this overlap
+                    break
+            
+            if not overlaps:
+                non_overlapping.append(entity)
+        
+        # Sort back by original position
+        non_overlapping.sort(key=lambda x: x['start'])
+        
+        # Debug info
+        if len(entities) != len(non_overlapping):
+            removed_count = len(entities) - len(non_overlapping)
+            st.info(f"Removed {removed_count} overlapping entities for cleaner results")
+        
+        return non_overlapping
+
     def extract_entities(self, text: str):
-        """Extract named entities from text using Gemini LLM with context extraction."""
+        """Extract named entities from text using Gemini LLM with context extraction and overlap resolution."""
         try:
             import google.generativeai as genai
             
@@ -286,6 +344,9 @@ Output only a JSON array with the entities found:"""
                 st.warning("Could not parse JSON from Gemini response.")
                 return []
             
+            # Debug: Show what LLM found
+            st.info(f"LLM found {len(entities_raw)} raw entities: {[e.get('text', 'N/A') for e in entities_raw]}")
+            
             # Deduplicate entities from LLM response FIRST
             seen_entities = set()
             deduplicated_entities_raw = []
@@ -296,10 +357,6 @@ Output only a JSON array with the entities found:"""
                     if entity_key not in seen_entities:
                         seen_entities.add(entity_key)
                         deduplicated_entities_raw.append(entity)
-            
-            # DEBUG: Show deduplication results
-            if len(entities_raw) != len(deduplicated_entities_raw):
-                st.info(f"DEBUG: LLM returned {len(entities_raw)} entities, deduplicated to {len(deduplicated_entities_raw)}")
             
             entities_raw = deduplicated_entities_raw
             
@@ -378,6 +435,9 @@ Output only a JSON array with the entities found:"""
                                     'context_window': context_window
                                 }
                                 entities.append(entity)
+            
+            # CRITICAL: Remove overlapping entities to fix the duplication issue
+            entities = self._remove_overlapping_entities(entities)
             
             return entities
             
@@ -490,7 +550,7 @@ Output only a JSON array with the entities found:"""
                 'north korea': ['democratic people\'s republic of korea', 'korea north'],
                 'czech republic': ['czechia'],
                 'myanmar': ['burma'],
-                'ivory coast': ['cÃ´te d\'ivoire'],
+                'ivory coast': ['cÃƒÂ´te d\'ivoire'],
                 'democratic republic of the congo': ['drc', 'congo kinshasa'],
                 'republic of the congo': ['congo brazzaville'],
                 'united arab emirates': ['uae'],
@@ -1255,7 +1315,7 @@ class StreamlitLLMEntityLinker:
     Streamlit wrapper for the enhanced LLM Entity Linker class.
     
     Provides the same interface as the NLTK version but uses LLM for entity extraction
-    with contextual linking and unbiased global geocoding.
+    with contextual linking, unbiased global geocoding, and overlap resolution.
     """
     
     def __init__(self):
@@ -1309,7 +1369,7 @@ class StreamlitLLMEntityLinker:
             if os.path.exists(logo_path):
                 st.image(logo_path, width=300)
             else:
-                st.info("ðŸ’¡ Place your logo.png file in the same directory as this app to display it here")
+                st.info("Place your logo.png file in the same directory as this app to display it here")
         except Exception as e:
             st.warning(f"Could not load logo: {e}")        
         
@@ -1317,7 +1377,7 @@ class StreamlitLLMEntityLinker:
         
         # Main title and description
         st.header("From Text to Linked Data using LLM")
-        st.markdown("**Extract and link named entities from text using Gemini LLM with contextual disambiguation**")
+        st.markdown("**Extract and link named entities from text using Gemini LLM with contextual disambiguation and overlap resolution**")
         
         # Create enhanced process diagram
         st.markdown("""
@@ -1328,7 +1388,7 @@ class StreamlitLLMEntityLinker:
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
-                     <strong>Gemini LLM Entity Recognition + Context Analysis</strong>
+                     <strong>Gemini LLM Entity Recognition + Context Analysis + Overlap Resolution</strong>
                 </div>
                 <div style="margin: 10px 0;">⬇️</div>
                 <div style="text-align: center;">
@@ -1364,7 +1424,7 @@ class StreamlitLLMEntityLinker:
     def render_sidebar(self):
         """Render the sidebar with enhanced information."""
         st.sidebar.subheader("Enhanced Entity Linking")
-        st.sidebar.info("Entities are extracted using Gemini LLM with contextual analysis of surrounding words for better disambiguation. Links to Wikidata first, then Wikipedia, then Britannica as fallbacks.")
+        st.sidebar.info("Entities are extracted using Gemini LLM with contextual analysis of surrounding words for better disambiguation. Overlapping entities are resolved to prevent duplicates. Links to Wikidata first, then Wikipedia, then Britannica as fallbacks.")
         
         st.sidebar.subheader("Global Geocoding")
         if PYCOUNTRY_AVAILABLE:
@@ -1418,7 +1478,7 @@ class StreamlitLLMEntityLinker:
         return text_input, analysis_title or "text_analysis"
 
     def process_text(self, text: str, title: str):
-        """Process the input text using the enhanced LLM EntityLinker with contextual linking."""
+        """Process the input text using the enhanced LLM EntityLinker with contextual linking and overlap resolution."""
         if not text.strip():
             st.warning("Please enter some text to analyse.")
             return
@@ -1429,7 +1489,7 @@ class StreamlitLLMEntityLinker:
             st.info("This text has already been processed. Results shown below.")
             return
         
-        with st.spinner("Processing text and extracting entities with contextual analysis..."):
+        with st.spinner("Processing text and extracting entities with contextual analysis and overlap resolution..."):
             try:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
@@ -1439,8 +1499,8 @@ class StreamlitLLMEntityLinker:
                 progress_bar.progress(10)
                 text_context = self.entity_linker.analyse_text_context(text)
                 
-                # Step 2: Extract entities with context
-                status_text.text("Extracting entities with context analysis using Gemini LLM...")
+                # Step 2: Extract entities with context and overlap resolution
+                status_text.text("Extracting entities with context analysis and overlap resolution using Gemini LLM...")
                 progress_bar.progress(25)
                 entities_json = self.cached_extract_entities(text)
                 entities = json.loads(entities_json)
@@ -1715,7 +1775,7 @@ class StreamlitLLMEntityLinker:
                 "title": st.session_state.analysis_title,
                 "entities": [],
                 "processingInfo": {
-                    "entityExtraction": "Gemini LLM with contextual analysis",
+                    "entityExtraction": "Gemini LLM with contextual analysis and overlap resolution",
                     "geocodingMethod": "Global coverage (places only)",
                     "linkingStrategy": "Contextual disambiguation using surrounding words",
                     "globalCoverage": PYCOUNTRY_AVAILABLE
@@ -1780,7 +1840,7 @@ class StreamlitLLMEntityLinker:
             st.download_button(
                 label="Download Enhanced JSON-LD",
                 data=json_str,
-                file_name=f"{st.session_state.analysis_title}_entities_contextual.jsonld",
+                file_name=f"{st.session_state.analysis_title}_entities_fixed.jsonld",
                 mime="application/ld+json",
                 use_container_width=True
             )
@@ -1792,7 +1852,7 @@ class StreamlitLLMEntityLinker:
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Enhanced Entity Analysis with Contextual Linking</title>
+    <title>Enhanced Entity Analysis with Overlap Resolution</title>
     <style>
         body {{
             font-family: Arial, sans-serif;
@@ -1818,9 +1878,10 @@ class StreamlitLLMEntityLinker:
 <body>
     <div class="metadata">
         <h3>Processing Information</h3>
-        <p><strong>Method:</strong> LLM Entity Extraction with Contextual Linking</p>
+        <p><strong>Method:</strong> LLM Entity Extraction with Contextual Linking and Overlap Resolution</p>
         <p><strong>Geocoding:</strong> Global coverage (places only) - {"195+ countries" if PYCOUNTRY_AVAILABLE else "Limited coverage"}</p>
         <p><strong>Disambiguation:</strong> Uses surrounding words for better linking accuracy</p>
+        <p><strong>Overlap Resolution:</strong> Eliminates duplicate entities like "Amazon" vs "Amazon rainforest"</p>
     </div>
     {st.session_state.html_content}
 </body>
@@ -1829,7 +1890,7 @@ class StreamlitLLMEntityLinker:
                 st.download_button(
                     label="Download Enhanced HTML",
                     data=html_template,
-                    file_name=f"{st.session_state.analysis_title}_entities_contextual.html",
+                    file_name=f"{st.session_state.analysis_title}_entities_fixed.html",
                     mime="text/html",
                     use_container_width=True
                 )
