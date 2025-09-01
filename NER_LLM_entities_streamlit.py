@@ -1369,7 +1369,7 @@ class StreamlitLLMEntityLinker:
             if os.path.exists(logo_path):
                 st.image(logo_path, width=300)
             else:
-                st.info("Place your logo.png file in the same directory as this app to display it here")
+                st.info("🖼️ Place your logo.png file in the same directory as this app to display it here")
         except Exception as e:
             st.warning(f"Could not load logo: {e}")        
         
@@ -1723,6 +1723,7 @@ class StreamlitLLMEntityLinker:
             row = {
                 'Entity': entity['text'],
                 'Type': entity['type'],
+                'Context': entity.get('context_window', {}).get('context_snippet', '')[:100] + "..." if entity.get('context_window', {}).get('context_snippet', '') else 'N/A',
                 'Links': self.format_entity_links(entity)
             }
             
