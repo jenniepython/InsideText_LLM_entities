@@ -190,12 +190,12 @@ ENTITY TYPES:
 
 CRITICAL RULES:
 1. Only extract proper nouns - things with specific names
-2. Don't extract adjectives or descriptive words (e.g., skip "Egyptian" in "Egyptian goods")
+2. Don't extract adjectives or descriptive words (e.g., skip "Scottish" in "Scottish goods")
 3. Don't extract common job titles or roles unless they're part of a proper name
 4. Don't extract generic terms like "king", "merchants", "women" unless they're part of a proper name
 5. IMPORTANT: Only list each unique entity ONCE in your response, even if it appears multiple times in the text
-6. CRITICAL: When you find a compound entity like "Amazon rainforest", do NOT also extract just "Amazon" separately
-7. CRITICAL: Choose the most complete and specific form of each entity (e.g., prefer "Amazon rainforest" over "Amazon" when referring to the location)
+6. CRITICAL: When you find a compound entity like "Edinburgh castle", do NOT also extract just "Edinburgh" separately
+7. CRITICAL: Choose the most complete and specific form of each entity (e.g., prefer "Edinburgh castle" over "Edinburgh" when referring to the location)
 8. CRITICAL: If the same word appears in different contexts (like "Amazon rainforest" vs "Amazon company"), extract both as separate entities
 
 EXAMPLES:
