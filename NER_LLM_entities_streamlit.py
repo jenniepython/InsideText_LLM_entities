@@ -1326,35 +1326,35 @@ class StreamlitLLMEntityLinker:
                 <div style="background-color: #C4C3A2; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>Input Text</strong>
                 </div>
-                <div style="margin: 10px 0;">â¬‡ï¸</div>
+                <div style="margin: 10px 0;">⬇️</div>
                 <div style="background-color: #9fd2cd; padding: 10px; border-radius: 5px; display: inline-block; margin: 5px;">
                      <strong>Gemini LLM Entity Recognition + Context Analysis</strong>
                 </div>
-                <div style="margin: 10px 0;">â¬‡ï¸</div>
+                <div style="margin: 10px 0;">⬇️</div>
                 <div style="text-align: center;">
                     <strong>Contextual Linking to Knowledge Bases:</strong>
                 </div>
                 <div style="margin: 15px 0;">
                     <div style="background-color: #EFCA89; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>Wikidata</strong><br><small>Using surrounding words</small>
+                         <strong>Wikidata</strong>
                     </div>
                     <div style="background-color: #C3B5AC; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                        <strong>Wikipedia/Britannica</strong><br><small>Context-aware search</small>
+                        <strong>Wikipedia/Britannica</strong>
                     </div>
                     <div style="background-color: #BF7B69; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em;">
-                         <strong>Global Geocoding</strong><br><small>Places only (195+ countries)</small>
+                         <strong>Global Geocoding</strong>
                     </div>
                 </div>
-                <div style="margin: 10px 0;">â¬‡ï¸</div>
+                <div style="margin: 10px 0;">⬇️</div>
                 <div style="text-align: center;">
                     <strong>Output Formats:</strong>
                 </div>
                 <div style="margin: 15px 0;">
                     <div style="background-color: #E8E1D4; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em; border: 2px solid #EFCA89;">
-                         <strong>JSON-LD Export</strong><br><small>Structured data format</small>
+                         <strong>JSON-LD Export</strong>
                     </div>
                     <div style="background-color: #E8E1D4; padding: 8px; border-radius: 5px; display: inline-block; margin: 3px; font-size: 0.9em; border: 2px solid #C3B5AC;">
-                         <strong>HTML Export</strong><br><small>Portable web format</small>
+                         <strong>HTML Export</strong>
                     </div>
                 </div>
             </div>
@@ -1841,7 +1841,7 @@ class StreamlitLLMEntityLinker:
         
         text_input, analysis_title = self.render_input_section()
         
-        if st.button("Process Text with Contextual Analysis", type="primary", use_container_width=True):
+        if st.button("Process Text", type="primary", use_container_width=True):
             if text_input.strip():
                 self.process_text(text_input, analysis_title)
             else:
