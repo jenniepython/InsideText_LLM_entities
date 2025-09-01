@@ -396,17 +396,11 @@ Output only a JSON array with the entities found:"""
         }
 
     def _build_generic_context_queries(self, entity, context_window):
-        """Build search queries using generic contextual patterns with stronger type constraints."""
-        entity_type = entity.get('type', '')
-        entity_text = entity['text']
+        """Build search queries using generic contextual patterns."""
+        queries = [entity['text']]  # Base query
         
-        # For highly ambiguous common names, avoid bare searches
-        ambiguous_names = {'jordan', 'washington', 'lincoln', 'franklin', 'madison', 'jackson', 'taylor', 'wilson', 'adams', 'johnson', 'brown', 'smith', 'jones', 'davis', 'miller', 'moore', 'jackson', 'martin', 'garcia', 'martinez', 'robinson', 'clark', 'rodriguez', 'lewis', 'lee', 'walker', 'hall', 'allen', 'young', 'hernandez', 'king', 'wright', 'lopez', 'hill', 'scott', 'green', 'adams', 'baker', 'gonzalez', 'nelson', 'carter', 'mitchell', 'perez', 'roberts', 'turner', 'phillips', 'campbell', 'parker', 'evans', 'edwards', 'collins'}
-        
-        queries = []
-        
-        # Extract context words
         context_words = []
+        
         if context_window.get('before'):
             words = [w.strip('.,;:!?"()[]{}') for w in context_window['before'].split()]
             context_words.extend([w for w in words if len(w) > 2 and 
@@ -417,74 +411,37 @@ Output only a JSON array with the entities found:"""
             context_words.extend([w for w in words if len(w) > 2 and 
                                 w.lower() not in self._get_stop_words()][:3])
         
-        # Add context-based queries first (most specific)
         for word in context_words:
-            queries.append(f"{entity_text} {word}")
+            queries.append(f"{entity['text']} {word}")
         
-        # Type-specific query strategies
+        entity_type = entity.get('type', '')
         if entity_type == 'PERSON':
-            # For persons, especially ambiguous names, be very specific
-            queries.extend([
-                f"{entity_text} person",
-                f"{entity_text} biography", 
-                f"{entity_text} individual"
-            ])
-            # Only add bare name if not ambiguous
-            if entity_text.lower() not in ambiguous_names:
-                queries.append(entity_text)
-                
+            queries.append(f"{entity['text']} person biography")
         elif entity_type == 'GPE':
-            queries.extend([
-                f"{entity_text} place location",
-                f"{entity_text} city",
-                f"{entity_text} country"
-            ])
-            queries.append(entity_text)  # Places are usually safe with bare names
-            
+            queries.append(f"{entity['text']} place location")
         elif entity_type == 'ORGANIZATION':
-            queries.extend([
-                f"{entity_text} organization",
-                f"{entity_text} group company"
-            ])
-            queries.append(entity_text)
-            
+            queries.append(f"{entity['text']} organization group")
         elif entity_type in ['LOCATION', 'FACILITY']:
-            queries.extend([
-                f"{entity_text} location",
-                f"{entity_text} place"
-            ])
-            queries.append(entity_text)
-            
+            queries.append(f"{entity['text']} location")
         elif entity_type == 'WORK_OF_ART':
-            queries.extend([
-                f"{entity_text} work art",
-                f"{entity_text} book play film"
-            ])
-            queries.append(entity_text)
-        else:
-            # Default case
-            queries.append(entity_text)
+            queries.append(f"{entity['text']} work art")
         
-        # Capitalization hints
-        if entity_text.istitle() and entity_type == 'PERSON':
-            queries.append(f"{entity_text} name")
-        elif entity_text.islower():
-            queries.append(f"{entity_text} common noun")
+        if entity['text'].istitle():
+            queries.append(f"{entity['text']} proper noun")
+        elif entity['text'].islower():
+            queries.append(f"{entity['text']} common noun")
         
         return list(dict.fromkeys(queries))
 
     def _calculate_context_similarity_score(self, candidate, entity, context_window):
-        """Generic algorithm to score candidate relevance based on context with STRONG type enforcement."""
+        """Generic algorithm to score candidate relevance based on context."""
         score = 0
         description = candidate.get('description', '').lower()
         label = candidate.get('label', '').lower()
-        entity_type = entity.get('type', '')
         
-        # Exact label match bonus
         if label == entity['text'].lower():
             score += 15
         
-        # Context word matching
         context_words = []
         if context_window.get('before'):
             context_words.extend(context_window['before'].lower().split())
@@ -498,52 +455,6 @@ Output only a JSON array with the entities found:"""
             if word in description or word in label:
                 score += 3
         
-        # STRONGER type enforcement - hard rejections for wrong types
-        if entity_type == 'PERSON':
-            # Strong positive signals for person
-            if any(term in description for term in ['person', 'human', 'individual', 'people', 'born', 'died', 'biography', 'life', 'career', 'actor', 'writer', 'politician', 'scientist', 'artist', 'musician', 'athlete', 'student', 'teacher', 'professor', 'doctor', 'engineer']):
-                score += 15
-            
-            # HARD REJECTION for geographical/political entities
-            geographical_terms = ['country', 'nation', 'state', 'city', 'kingdom', 'republic', 'province', 'region', 'territory', 'capital', 'government', 'border', 'located', 'area', 'population', 'geography', 'continent', 'island', 'peninsula', 'landlocked']
-            if any(term in description for term in geographical_terms):
-                return -100  # Hard rejection
-                
-        elif entity_type == 'GPE':
-            # Strong positive for geographical/political
-            if any(term in description for term in ['country', 'city', 'state', 'nation', 'place', 'capital', 'located', 'government', 'region', 'territory', 'province', 'municipality', 'district', 'area']):
-                score += 15
-            
-            # Hard rejection for persons
-            person_terms = ['person', 'individual', 'human', 'born', 'died', 'biography', 'life', 'career', 'actor', 'writer', 'politician', 'scientist', 'artist']
-            if any(term in description for term in person_terms):
-                return -100
-                
-        elif entity_type == 'ORGANIZATION':
-            if any(term in description for term in ['organization', 'company', 'group', 'institution', 'association', 'corporation', 'foundation', 'society', 'club', 'team', 'business', 'firm']):
-                score += 15
-            
-            # Reject individual persons or places
-            if any(term in description for term in ['person', 'individual', 'born', 'died']) or any(term in description for term in ['country', 'city', 'located in']):
-                return -100
-                
-        elif entity_type in ['LOCATION', 'FACILITY']:
-            if any(term in description for term in ['location', 'place', 'building', 'structure', 'site', 'facility', 'venue', 'landmark', 'monument', 'museum', 'theater', 'stadium', 'hospital', 'school', 'university', 'church', 'temple']):
-                score += 15
-            
-            # Reject persons or abstract concepts
-            if any(term in description for term in ['person', 'individual', 'born', 'died']):
-                return -100
-                
-        elif entity_type == 'WORK_OF_ART':
-            if any(term in description for term in ['work', 'art', 'book', 'play', 'film', 'movie', 'song', 'album', 'painting', 'novel', 'poem', 'story', 'drama', 'comedy', 'musical', 'opera', 'ballet', 'sculpture', 'artwork']):
-                score += 15
-            
-            # Reject persons or places (unless they're about the work)
-            if any(term in description for term in ['person', 'individual', 'born', 'died']) and not any(term in description for term in ['character', 'protagonist', 'story', 'novel', 'book']):
-                score -= 15  # Softer rejection as works can be about people
-        
-        # Capitalization patterns
         if entity['text'].istitle() and not entity['text'].islower():
             if any(term in description for term in ['specific', 'named', 'particular']):
                 score += 5
@@ -555,11 +466,37 @@ Output only a JSON array with the entities found:"""
             if any(term in description for term in ['specific', 'particular instance']):
                 score -= 3
         
-        # Always reject these categories
-        wrong_categories = ['disambiguation page', 'list of', 'category:', 'template:', 'wikimedia', 'redirect']
+        entity_type = entity.get('type', '')
+        if entity_type == 'PERSON':
+            if any(term in description for term in ['person', 'human', 'individual', 'people']):
+                score += 8
+            if any(term in description for term in ['place', 'location', 'building']):
+                score -= 5
+        elif entity_type == 'GPE':
+            if any(term in description for term in ['country', 'city', 'state', 'nation', 'place']):
+                score += 8
+            if any(term in description for term in ['person', 'individual', 'company']):
+                score -= 5
+        elif entity_type == 'ORGANIZATION':
+            if any(term in description for term in ['organization', 'company', 'group', 'institution']):
+                score += 8
+            if any(term in description for term in ['person', 'individual', 'place']):
+                score -= 5
+        elif entity_type in ['LOCATION', 'FACILITY']:
+            if any(term in description for term in ['location', 'place', 'building', 'structure']):
+                score += 8
+            if any(term in description for term in ['person', 'company', 'organization']):
+                score -= 5
+        elif entity_type == 'WORK_OF_ART':
+            if any(term in description for term in ['work', 'art', 'book', 'play', 'film', 'painting']):
+                score += 8
+            if any(term in description for term in ['person', 'place', 'company']):
+                score -= 5
+        
+        wrong_categories = ['disambiguation page', 'list of', 'category:', 'template:']
         for wrong in wrong_categories:
             if wrong in description or wrong in label:
-                return -100  # Hard rejection
+                score -= 10
         
         return score
 
