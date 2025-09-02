@@ -1731,7 +1731,6 @@ class StreamlitLLMEntityLinker:
             row = {
                 'Entity': entity['text'],
                 'Type': entity['type'],
-                'Context': entity.get('context_window', {}).get('context_snippet', '')[:100] + "..." if entity.get('context_window', {}).get('context_snippet', '') else 'N/A',
                 'Links': self.format_entity_links(entity)
             }
             
