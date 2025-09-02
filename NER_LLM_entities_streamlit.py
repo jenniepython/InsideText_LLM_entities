@@ -204,7 +204,18 @@ CRITICAL RULES:
     - "X River/Mountain/Sea/Castle" → LOCATION  
     - "country/nation/state of X" → X is GPE
     - "person/student/friend named X" → X is PERSON
-12. MULTI-OCCURRENCE ANALYSIS: When the same word appears multiple times, analyze each occurrence independently based on its specific context, not previous classifications.
+12. MULTI-OCCURRENCE ANALYSIS: When the same word appears multiple times, analyse each occurrence independently based on its specific context, not previous classifications.
+13. DESCRIPTIVE REFERENCE PATTERNS: Recognize when entities are described rather than directly named. Look for patterns:
+    - "the [noun] which is called [Name]" → extract "[Name] [noun]" or "[Name]"
+    - "the [noun] they call [Name]" → extract "[Name]" 
+    - "the [noun] known as [Name]" → extract "[Name]"
+
+14. ARCHAIC LANGUAGE STRUCTURES: Historical texts often use descriptive phrases instead of direct names. When you see these patterns, extract the actual entity name, not the descriptive words.
+
+15. PATTERN-BASED EXTRACTION: Focus on the grammatical structure rather than specific words:
+    - Pattern: "the X which is called Y" → Extract: Y (with appropriate type)
+    - Pattern: "the X they name Y" → Extract: Y (with appropriate type)  
+    - Pattern: "what men call X" → Extract: X (with appropriate type)
 
 EXAMPLES:
 
