@@ -198,7 +198,7 @@ CRITICAL RULES:
 7. CRITICAL: Choose the most complete and specific form of each entity (e.g., prefer "Edinburgh castle" over "Edinburgh" when referring to the location)
 8. CRITICAL: If the same word appears in different contexts (like "Amazon rainforest" vs "Amazon company"), extract both as separate entities
 9. CONTEXT-AWARE CLASSIFICATION: The same word can have different entity types based on surrounding context. Always check the immediate context before assigning entity type.
-10. GEOGRAPHICAL INDICATORS: When a word appears after phrases like "the country of", "nation of", "state of", "republic of", classify it as GPE, not PERSON.
+10. GEOGRAPHICAL INDICATORS - MANDATORY OVERRIDE: When a word appears immediately after "the country of", "nation of", "state of", "republic of", it MUST be classified as GPE regardless of any previous occurrences. This rule overrides all other classifications.
 11. DISAMBIGUATION PATTERNS: Look for context clues:
     - "President/King/Queen of X" → X is GPE
     - "X River/Mountain/Sea/Castle" → LOCATION  
