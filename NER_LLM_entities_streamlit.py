@@ -332,7 +332,7 @@ Output only a JSON array with the entities found:"""
         # Debug info
         if len(entities) != len(non_overlapping):
             removed_count = len(entities) - len(non_overlapping)
-            st.info(f"Removed {removed_count} overlapping entities for cleaner results")
+            st.info(f"Removed overlapping entities for cleaner results")
         
         return non_overlapping
 
@@ -364,7 +364,7 @@ Output only a JSON array with the entities found:"""
                 return []
             
             # Debug: Show what LLM found
-            st.info(f"LLM found {len(entities_raw)} raw entities: {[e.get('text', 'N/A') for e in entities_raw]}")
+#            st.info(f"LLM found {len(entities_raw)} raw entities: {[e.get('text', 'N/A') for e in entities_raw]}")
             
             # Deduplicate entities from LLM response FIRST
             seen_entities = set()
@@ -620,7 +620,7 @@ Output only a JSON array with the entities found:"""
                 geocoded_count += 1
                 continue
         
-        st.info(f"Geocoded {geocoded_count}/{len(place_entities)} place entities")
+#        st.info(f"Geocoded place entities")
         return entities
 
     def _detect_geographical_context(self, text: str, entities: List[Dict[str, Any]]) -> List[str]:
@@ -1388,7 +1388,7 @@ class StreamlitLLMEntityLinker:
             if os.path.exists(logo_path):
                 st.image(logo_path, width=300)
             else:
-                st.info("🖼️ Place your logo.png file in the same directory as this app to display it here")
+                st.info("Place your logo.png file in the same directory as this app to display it here")
         except Exception as e:
             st.warning(f"Could not load logo: {e}")        
         
@@ -1605,15 +1605,15 @@ class StreamlitLLMEntityLinker:
                 geocoded_places = len([e for e in linked_entities if e.get('latitude') is not None])
                 total_places = len([e for e in linked_entities if e['type'] in self.entity_linker.geocodable_types])
                 
-                success_message = f"Processing complete! Found {len(linked_entities)} contextually linked entities"
-                if total_places > 0:
-                    success_message += f" ({geocoded_places}/{total_places} places geocoded)"
+#                success_message = f"Processing complete! Found {len(linked_entities)} contextually linked entities"
+#                if total_places > 0:
+#                    success_message += f" ({geocoded_places}/{total_places} places geocoded)"
                 
                 unlinked_count = len(entities) - len(linked_entities)
-                if unlinked_count > 0:
-                    success_message += f" ({unlinked_count} entities found but not linked)"
+#                if unlinked_count > 0:
+#                    success_message += f" ({unlinked_count} entities found but not linked)"
                 
-                st.success(success_message)
+#                st.success(success_message)
                 
                 if text_context['period'] or text_context['region'] or text_context['subject_matter']:
                     context_info = []
@@ -1624,7 +1624,7 @@ class StreamlitLLMEntityLinker:
                     if text_context['subject_matter']:
                         context_info.append(f"Subject: {text_context['subject_matter'].title()}")
                     
-                    st.info(f"Context detected: {' | '.join(context_info)}")
+#                    st.info(f"Context detected: {' | '.join(context_info)}")
                 
             except Exception as e:
                 st.error(f"Error processing text: {e}")
